@@ -432,7 +432,7 @@ document.addEventListener('DOMContentLoaded', () => {
     updateZoomLabel();
   }
 
-  function panByScreenDelta(dxClient, dyClient) {
+  function panByScreenDelta(dxClient, dyClient, allowFreeMargin = false) {
     const vb = svg.viewBox.baseVal;
     const ctm = svg.getScreenCTM();
     let dxSvg, dySvg;
@@ -444,10 +444,15 @@ document.addEventListener('DOMContentLoaded', () => {
       dxSvg = dxClient * (vb.width / (rect.width || 1));
       dySvg = dyClient * (rect.height ? vb.height / rect.height : 1);
     }
-    const maxX = Math.max(MAP_BASE.x, MAP_BASE.x + MAP_BASE.width - vb.width);
-    const maxY = Math.max(MAP_BASE.y, MAP_BASE.y + MAP_BASE.height - vb.height);
-    vb.x = clamp(vb.x - dxSvg, MAP_BASE.x, maxX);
-    vb.y = clamp(vb.y - dySvg, MAP_BASE.y, maxY);
+    const freePan = allowFreeMargin || document.body.classList.contains('map-editor-active');
+    const marginX = freePan ? 450 : 0;
+    const marginY = freePan ? 320 : 0;
+    const minX = MAP_BASE.x - marginX;
+    const minY = MAP_BASE.y - marginY;
+    const maxX = Math.max(MAP_BASE.x, MAP_BASE.x + MAP_BASE.width - vb.width) + marginX;
+    const maxY = Math.max(MAP_BASE.y, MAP_BASE.y + MAP_BASE.height - vb.height) + marginY;
+    vb.x = clamp(vb.x - dxSvg, minX, maxX);
+    vb.y = clamp(vb.y - dySvg, minY, maxY);
   }
 
   function resetMapZoom() {
@@ -558,19 +563,54 @@ document.addEventListener('DOMContentLoaded', () => {
   svg.addEventListener('touchend', endPinch);
   svg.addEventListener('touchcancel', endPinch);
 
-  // 1-Finger / Mouse Drag Pan (with 5px tap-vs-drag threshold so room/marker taps always work!)
+  // 1-Finger / Left-Click Pan (in normal mode) + Right-Click Mouse Drag Pan (in Studio Editor Mode & normal mode!)
+  let panButton = 0;
+
+  // Suppress browser context menu on the map when right-click dragging or when Studio Edit Peta is active
+  svg.addEventListener('contextmenu', e => {
+    e.preventDefault();
+  });
+  mapWrapper?.addEventListener('contextmenu', e => {
+    if (document.body.classList.contains('map-editor-active') || isPanningMap || window.__wasMapDragging) {
+      e.preventDefault();
+    }
+  });
+
+  // Capture-phase listener for Right-Click (e.button === 2) so right-click ALWAYS pans the map in Editor Mode,
+  // even when hovering over rooms, markers, doors, walls, or while a drawing tool is active!
   svg.addEventListener('pointerdown', e => {
-    if (pinchActive || !e.isPrimary || e.button !== 0 || mapZoom <= 1) return;
+    if (pinchActive) return;
+    if (e.button === 2) {
+      e.preventDefault();
+      e.stopPropagation();
+      panPointerId = e.pointerId;
+      panButton = 2;
+      downPointer = { x: e.clientX, y: e.clientY };
+      lastPointer = { x: e.clientX, y: e.clientY };
+      isPanningMap = true;
+      window.__wasMapDragging = true;
+      svg.classList.add('is-panning');
+      try { svg.setPointerCapture?.(e.pointerId); } catch (_) {}
+      return;
+    }
+    if (!e.isPrimary || e.button !== 0 || mapZoom <= 1) return;
     if (window.__isEditorBusy?.()) return;
     if (e.target.closest('.editor-marker-handle, .v6-map-handle, .v6-wall-handle, #v6-map-area-layer .v6-map-area')) return;
     panPointerId = e.pointerId;
+    panButton = 0;
     downPointer = { x: e.clientX, y: e.clientY };
     lastPointer = { x: e.clientX, y: e.clientY };
     isPanningMap = false;
-  });
+  }, true);
 
-  svg.addEventListener('pointermove', e => {
+  window.addEventListener('pointermove', e => {
     if (pinchActive || e.pointerId !== panPointerId || !lastPointer) return;
+    if (panButton === 2) {
+      e.preventDefault();
+      panByScreenDelta(e.clientX - lastPointer.x, e.clientY - lastPointer.y, true);
+      lastPointer = { x: e.clientX, y: e.clientY };
+      return;
+    }
     if (mapZoom <= 1 || window.__isEditorBusy?.()) return;
     if (!isPanningMap) {
       if (!downPointer || Math.hypot(e.clientX - downPointer.x, e.clientY - downPointer.y) < 5) return;
@@ -579,9 +619,9 @@ document.addEventListener('DOMContentLoaded', () => {
       svg.classList.add('is-panning');
       try { svg.setPointerCapture?.(e.pointerId); } catch (_) {}
     }
-    panByScreenDelta(e.clientX - lastPointer.x, e.clientY - lastPointer.y);
+    panByScreenDelta(e.clientX - lastPointer.x, e.clientY - lastPointer.y, false);
     lastPointer = { x: e.clientX, y: e.clientY };
-  });
+  }, { passive: false });
 
   function endMapPan(e) {
     if (e.pointerId !== panPointerId) return;
@@ -590,13 +630,14 @@ document.addEventListener('DOMContentLoaded', () => {
       setTimeout(() => { window.__wasMapDragging = false; }, 80);
     }
     isPanningMap = false;
+    panButton = 0;
     downPointer = null;
     lastPointer = null;
     svg.classList.remove('is-panning');
     panPointerId = null;
   }
-  svg.addEventListener('pointerup', endMapPan);
-  svg.addEventListener('pointercancel', endMapPan);
+  window.addEventListener('pointerup', endMapPan, true);
+  window.addEventListener('pointercancel', endMapPan, true);
 
   zoomInBtn?.addEventListener('click', () => {
     const r = svg.getBoundingClientRect();
@@ -3035,7 +3076,7 @@ document.addEventListener('DOMContentLoaded',()=>{
     }, true);
 
     window.addEventListener('pointermove', e => {
-      if (!drawMode) return;
+      if (!drawMode || e.buttons === 2) return;
       const svgEl = e.target.closest?.('#main-svg');
       if (!svgEl && !drawPointerDown) return;
       const pt = screenToSvgPoint(e.clientX, e.clientY);
@@ -4405,7 +4446,7 @@ document.addEventListener('DOMContentLoaded',()=>{
     const headTitle = panel.querySelector('.map-editor-head h3');
     const headDesc = panel.querySelector('.map-editor-head p');
     if (headTitle) headTitle.textContent = '✎ Studio Edit Peta (All-in-One)';
-    if (headDesc) headDesc.textContent = 'Ubah ruangan, pintu, tembok, CCTV, rute & teks langsung di web tanpa menyentuh kodingan.';
+    if (headDesc) headDesc.innerHTML = 'Ubah ruangan, pintu, tembok, CCTV &amp; rute secara langsung. <b>Tip: Klik Kanan + Geser</b> untuk menggeser peta.';
 
     // Wrap existing safety controls into #studio-pane-safety
     const safetyPane = document.createElement('div');
@@ -5266,14 +5307,14 @@ document.addEventListener('DOMContentLoaded',()=>{
     const pane = document.getElementById('studio-pane-save');
     if (!pane) return;
     pane.innerHTML = `
-      <div class="studio-card" style="background:linear-gradient(135deg,#ecfeff,#ffffff);border-color:#a5f3fc">
-        <div class="studio-card-title" style="color:#0e7490"><span>🔄 Sinkronisasi PC ⇄ Mobile (HP)</span></div>
-        <p style="font-size:8px;line-height:1.5;color:#0f766e;margin:0 0 8px">
-          Agar perubahan yang kamu edit di PC langsung muncul sama persis di HP (Mobile), simpan ke <b><code>data/map-state.json</code></b> (otomatis dibaca semua HP) atau buka panel <b>QR / Link Sinkronisasi</b>:
+      <div class="studio-card" style="background:linear-gradient(135deg,#ecfdf5,#ffffff);border-color:#6ee7b7">
+        <div class="studio-card-title" style="color:#047857"><span>⚡ Auto-Sync PC ⇄ Mobile Aktif</span></div>
+        <p style="font-size:8px;line-height:1.5;color:#065f46;margin:0 0 8px">
+          Setiap perubahan di Studio otomatis disinkronkan secara real-time ke semua perangkat (PC &amp; HP) yang membuka link web yang sama tanpa perlu tombol manual.
         </p>
         <div class="studio-grid-2">
-          <button type="button" class="studio-btn primary" id="st-save-shared-json" style="background:#0891b2;border-color:#0e7490">💾 Simpan map-state.json</button>
-          <button type="button" class="studio-btn" id="st-open-sync-modal" style="border-color:#67e8f9;color:#0e7490">🔄 QR / Link Sync HP</button>
+          <button type="button" class="studio-btn primary" id="st-save-shared-json" style="background:#059669;border-color:#047857">💾 Unduh map-state.json</button>
+          <button type="button" class="studio-btn" id="st-open-sync-modal" style="border-color:#6ee7b7;color:#047857">📱 Opsi QR / Cadangan</button>
         </div>
       </div>
 
@@ -5306,7 +5347,7 @@ document.addEventListener('DOMContentLoaded',()=>{
     pane.querySelector('#st-export-full-json')?.addEventListener('click', exportFullBundleJson);
     pane.querySelector('#st-import-full-json')?.addEventListener('click', () => pane.querySelector('#st-import-json-input')?.click());
     pane.querySelector('#st-import-json-input')?.addEventListener('change', importFullBundleJson);
-    pane.querySelector('#st-factory-reset')?.addEventListener('click', () => {
+    pane.querySelector('#st-factory-reset')?.addEventListener('click', async () => {
       if (!confirm('Reset seluruh perubahan ruangan, pintu, tembok, CCTV, dan jalur evakuasi ke kondisi bawaan awal?')) return;
       localStorage.removeItem(STUDIO_KEY);
       localStorage.removeItem('gisK3MapEditorV7Safety');
@@ -5314,12 +5355,14 @@ document.addEventListener('DOMContentLoaded',()=>{
       localStorage.removeItem('gisK3MapBuilderV9');
       localStorage.removeItem('gisK3EvacBackendV2');
       localStorage.removeItem('gisK3EvacBackendV1');
-      localStorage.removeItem('gisK3BakedAppliedAt');
+      const resetTs = new Date().toISOString();
+      localStorage.setItem('gisK3BakedAppliedAt', resetTs);
       studio = defaultStudioState();
       window.__mapEditorSafetyAPI?.reset();
       window.EvacBackend?.resetAllSegments?.();
       window.EvacBackend?.resetQrStarts?.();
       window.EvacBackend?.resetAssemblyPoint?.();
+      try { await window.__pushAutoCloudReset?.(resetTs); } catch (_) {}
       location.reload();
     });
   }
@@ -5871,11 +5914,234 @@ document.addEventListener('DOMContentLoaded',()=>{
     window.addEventListener('hashchange', () => decodeAndApplySyncHash(false));
   }
 
+  // ============================================================================
+  // AUTOMATIC ZERO-CLICK LIVE SYNC (PC ⇄ MOBILE FROM THE SAME LINK)
+  // Uses Netlify Function (/.netlify/functions/map-state) + Real-Time SSE/PubSub
+  // ============================================================================
+  const AUTO_SYNC_CLIENT_ID = 'client_' + Math.random().toString(36).slice(2, 10);
+  let autoPushTimer = null;
+  let isApplyingRemoteSync = false;
+  let lastSyncedB64 = '';
+
+  function getAutoSyncTopic() {
+    const rawUrl = (window.location.hostname || 'local') + (window.location.pathname || '/').replace(/\/index\.html$/i, '').replace(/\/+$/, '');
+    let h1 = 0xdeadbeef ^ rawUrl.length, h2 = 0x41c6ce57 ^ rawUrl.length;
+    for (let i = 0; i < rawUrl.length; i++) {
+      const ch = rawUrl.charCodeAt(i);
+      h1 = Math.imul(h1 ^ ch, 2654435761);
+      h2 = Math.imul(h2 ^ ch, 1597334677);
+    }
+    h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+    h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+    const hashHex = (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36);
+    return `pln_ulppnk_k3_v3_${hashHex}`;
+  }
+
+  function setHeaderSyncStatus(statusText, state = 'idle') {
+    const txtEl = document.getElementById('header-live-sync-text');
+    const dotEl = document.getElementById('header-live-sync-dot');
+    if (txtEl) txtEl.textContent = statusText;
+    if (dotEl) {
+      dotEl.style.background = state === 'syncing' ? '#0ea5e9' : '#10b981';
+    }
+  }
+
+  function encodeB64Only() {
+    const { url } = encodeSyncPayload();
+    return url.split('#sync=')[1] || '';
+  }
+
+  function applyRemoteSyncPacket(packet, silentToast = true) {
+    if (!packet || typeof packet !== 'object') return false;
+    if (packet.clientId && packet.clientId === AUTO_SYNC_CLIENT_ID) return false;
+    const remoteTs = packet.ts || '';
+    const localTs = localStorage.getItem('gisK3BakedAppliedAt') || '';
+    if (remoteTs && localTs && remoteTs <= localTs) return false;
+
+    isApplyingRemoteSync = true;
+    try {
+      if (packet.reset) {
+        localStorage.removeItem(STUDIO_KEY);
+        localStorage.removeItem('gisK3MapEditorV7Safety');
+        localStorage.removeItem('gisK3ManualMapV1');
+        localStorage.removeItem('gisK3EvacBackendV2');
+        localStorage.removeItem('gisK3EvacBackendV1');
+        localStorage.setItem('gisK3BakedAppliedAt', remoteTs || new Date().toISOString());
+        window.__mapEditorSafetyAPI?.reset();
+        window.EvacBackend?.resetAllSegments?.();
+        window.EvacBackend?.resetQrStarts?.();
+        window.EvacBackend?.resetAssemblyPoint?.();
+        studio = defaultStudioState();
+        applyAllStudioData();
+        window.__syncK3Metrics?.();
+        setHeaderSyncStatus('✓ Peta Direset Otomatis', 'idle');
+        return true;
+      }
+
+      const b64 = packet.b64 || '';
+      if (!b64 || b64 === lastSyncedB64) return false;
+      const std = b64.replace(/-/g, '+').replace(/_/g, '/');
+      const pad = std + '==='.slice((std.length + 3) % 4);
+      const json = decodeURIComponent(escape(atob(pad)));
+      const data = JSON.parse(json);
+      if (!data || typeof data !== 'object') return false;
+      data.t = remoteTs || data.t || new Date().toISOString();
+      const bundle = expandDeltaBundle(data);
+      lastSyncedB64 = b64;
+      applyFullBundle(bundle, 'Auto-Sync Live');
+      setHeaderSyncStatus('✓ Tersinkron Otomatis', 'idle');
+      return true;
+    } catch (_) {
+      return false;
+    } finally {
+      isApplyingRemoteSync = false;
+    }
+  }
+
+  async function pushAutoCloudState() {
+    if (isApplyingRemoteSync) return;
+    try {
+      const b64 = encodeB64Only();
+      if (!b64 || b64 === lastSyncedB64) return;
+      lastSyncedB64 = b64;
+      const ts = new Date().toISOString();
+      localStorage.setItem('gisK3BakedAppliedAt', ts);
+      const packet = { clientId: AUTO_SYNC_CLIENT_ID, ts, b64 };
+      const bodyStr = JSON.stringify(packet);
+      setHeaderSyncStatus('🔄 Menyinkronkan...', 'syncing');
+
+      const topic = getAutoSyncTopic();
+      const tasks = [];
+      if (location.protocol === 'http:' || location.protocol === 'https:') {
+        tasks.push(
+          fetch('/.netlify/functions/map-state', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: bodyStr
+          }).catch(() => null)
+        );
+      }
+      tasks.push(
+        fetch(`https://ntfy.sh/${topic}`, {
+          method: 'POST',
+          body: bodyStr
+        }).catch(() => null)
+      );
+      await Promise.allSettled(tasks);
+      setHeaderSyncStatus('✓ Tersinkron Otomatis', 'idle');
+    } catch (_) {
+      setHeaderSyncStatus('Auto-Sync PC ⇄ HP Aktif', 'idle');
+    }
+  }
+
+  window.__pushAutoCloudReset = async (ts) => {
+    const packet = { clientId: AUTO_SYNC_CLIENT_ID, ts: ts || new Date().toISOString(), reset: true };
+    const bodyStr = JSON.stringify(packet);
+    const topic = getAutoSyncTopic();
+    await Promise.allSettled([
+      fetch('/.netlify/functions/map-state', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: bodyStr }).catch(() => null),
+      fetch(`https://ntfy.sh/${topic}`, { method: 'POST', body: bodyStr }).catch(() => null)
+    ]);
+  };
+
+  window.__scheduleAutoCloudPush = () => {
+    if (isApplyingRemoteSync) return;
+    clearTimeout(autoPushTimer);
+    autoPushTimer = setTimeout(pushAutoCloudState, 550);
+  };
+
+  async function pullAutoCloudState() {
+    if (isApplyingRemoteSync) return false;
+    const topic = getAutoSyncTopic();
+    const candidates = [];
+
+    // 1. Check Netlify Serverless Function endpoint (/.netlify/functions/map-state)
+    if (location.protocol === 'http:' || location.protocol === 'https:') {
+      try {
+        const r = await fetch(`/.netlify/functions/map-state?t=${Date.now()}`, { cache: 'no-store' });
+        if (r.ok) {
+          const d = await r.json();
+          if (d && (d.b64 || d.reset)) candidates.push(d);
+        }
+      } catch (_) {}
+    }
+
+    // 2. Check Cloud Pub/Sub 24h Cache (works even on static drag-and-drop Netlify deploys)
+    try {
+      const r = await fetch(`https://ntfy.sh/${topic}/json?poll=1&since=all`, { cache: 'no-store' });
+      if (r.ok) {
+        const text = await r.text();
+        const lines = text.trim().split('\n').filter(Boolean);
+        for (let i = lines.length - 1; i >= 0; i--) {
+          try {
+            const msg = JSON.parse(lines[i]);
+            if (msg && msg.event === 'message' && msg.message) {
+              const parsed = JSON.parse(msg.message);
+              if (parsed && (parsed.b64 || parsed.reset)) {
+                candidates.push(parsed);
+                break;
+              }
+            }
+          } catch (_) {}
+        }
+      }
+    } catch (_) {}
+
+    if (!candidates.length) return false;
+    candidates.sort((a, b) => String(b.ts || '').localeCompare(String(a.ts || '')));
+    return applyRemoteSyncPacket(candidates[0], true);
+  }
+
+  function startAutoLiveSyncEngine() {
+    lastSyncedB64 = encodeB64Only();
+    // Initial pull from Netlify Function + Cloud Cache + static map-state.json
+    pullAutoCloudState().then(applied => {
+      if (!applied) pullSharedStateFromServer(false);
+    });
+
+    // Subscribe to real-time SSE stream so edits on Desktop appear on Mobile in < 0.5 seconds!
+    try {
+      if (typeof EventSource !== 'undefined') {
+        const topic = getAutoSyncTopic();
+        const es = new EventSource(`https://ntfy.sh/${topic}/sse`);
+        es.onmessage = ev => {
+          try {
+            const msg = JSON.parse(ev.data || '{}');
+            if (msg && msg.message) {
+              const packet = JSON.parse(msg.message);
+              applyRemoteSyncPacket(packet, true);
+            }
+          } catch (_) {}
+        };
+      }
+    } catch (_) {}
+
+    // Also pull whenever user switches back to the browser tab or unlocks their phone
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') pullAutoCloudState();
+    });
+    window.addEventListener('focus', () => pullAutoCloudState());
+
+    // Lightweight background heartbeat poll every 8s when page is visible
+    setInterval(() => {
+      if (document.visibilityState === 'visible' && !svgDrag) {
+        pullAutoCloudState();
+      }
+    }, 8000);
+  }
+
   window.GisSync = {
-    openModal: () => document.getElementById('btn-sync-devices')?.click(),
+    openModal: () => {
+      refreshSyncModalUI();
+      const modal = document.getElementById('sync-devices-modal');
+      modal?.classList.add('open');
+      modal?.setAttribute('aria-hidden', 'false');
+    },
     saveSharedJsonToProject,
     savePermanentHtmlFile,
     pullSharedStateFromServer,
+    pullAutoCloudState,
+    pushAutoCloudState,
     applyFullBundle
   };
 
@@ -6110,10 +6376,9 @@ document.addEventListener('DOMContentLoaded',()=>{
     installStudioSvgInteractions();
     initDeviceSyncModal();
 
-    // Auto-check Sync Hash/Query (?sync=... or #sync=...) and shared data/map-state.json on load
-    if (!decodeAndApplySyncHash(true)) {
-      pullSharedStateFromServer(false);
-    }
+    // Auto-check Sync Hash/Query (?sync=... or #sync=...) and start Zero-Click AutoLiveSync Engine
+    decodeAndApplySyncHash(true);
+    startAutoLiveSyncEngine();
 
     // Quick "Simpan HTML" button in top toolbar
     document.getElementById('btn-quick-save-html')?.addEventListener('click', savePermanentHtmlFile);
@@ -6252,9 +6517,6 @@ document.addEventListener('DOMContentLoaded',()=>{
         <button type="button" class="mobile-fab-mini admin-only-control" id="mobile-studio-fab" title="Buka / Tutup Studio Edit Peta">
           <b>✎</b><span>Studio Edit</span>
         </button>
-        <button type="button" class="mobile-fab-mini" id="mobile-sync-fab" title="Sinkronisasi Peta PC ⇄ Mobile">
-          <b>🔄</b><span>Sync PC⇄HP</span>
-        </button>
         <button type="button" class="mobile-fab-mini" id="mobile-ui-toggle-fab" title="Sembunyikan / Tampilkan Bar Atas (Mode Fokus Peta)">
           <b>⤢</b><span>Fokus Peta</span>
         </button>
@@ -6314,6 +6576,7 @@ document.addEventListener('DOMContentLoaded',()=>{
     } catch (_) {}
     window.__broadcastLiveSync = function(kind) {
       try { syncChannel?.postMessage({ kind, ts: Date.now() }); } catch (_) {}
+      window.__scheduleAutoCloudPush?.(kind);
     };
     window.addEventListener('storage', ev => {
       if (!ev.key) return;

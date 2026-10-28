@@ -26,9 +26,9 @@
 </div>
 <div class="flex items-center gap-2 text-[10px] font-semibold">
 <button class="v6-admin-entry" id="admin-entry" type="button">🔐 Admin</button>
-<div class="flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-emerald-700">
-<span class="h-2 w-2 rounded-full bg-emerald-500 animate-pulse"></span>
-      Sistem Pemetaan Aktif
+<div class="flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-emerald-700" id="header-live-sync-pill" title="Sinkronisasi otomatis antara PC dan HP (Mobile) melalui link yang sama">
+<span class="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" id="header-live-sync-dot"></span>
+      <span id="header-live-sync-text">Auto-Sync PC ⇄ HP Aktif</span>
     </div>
 </div>
 </header>
@@ -38,7 +38,6 @@
 <button class="gis-layer-btn" data-layer="safety">✚ <span>APAR &amp; K3 Safety</span></button>
 <button class="gis-layer-btn" id="btn-temporary-wall">▰ <span>Mode Tembok Sementara</span></button>
 <button class="gis-layer-btn" id="btn-qr-starts">⌁ <span>QR Titik Awal</span></button>
-<button class="gis-layer-btn" id="btn-sync-devices" title="Sinkronisasi perubahan antara PC dan HP (Mobile)" style="border-color:#bae6fd;background:#f0f9ff;color:#0369a1;font-weight:800">🔄 <span>Sync PC ⇄ HP</span></button>
 <button class="gis-layer-btn" id="map-editor-toggle" style="border-color:#c7d2fe;background:#eef2ff;color:#4338ca;font-weight:800">✎ <span>Studio Edit Peta</span></button>
 <button class="gis-layer-btn" id="btn-quick-save-html" title="Simpan seluruh perubahan langsung menjadi file index.html permanen" style="border-color:#bbf7d0;background:#f0fdf4;color:#15803d;font-weight:800">💾 <span>Simpan HTML</span></button>
 <div class="gis-search">
@@ -56,7 +55,7 @@
 <button aria-label="Perkecil" class="map-zoom-btn" id="map-zoom-out" type="button">−</button>
 <button aria-label="Reset zoom" class="map-zoom-btn" id="map-zoom-reset" title="Reset zoom" type="button">↺</button>
 </div>
-<div class="map-zoom-hint">Scroll untuk zoom · drag untuk geser</div>
+<div class="map-zoom-hint">Scroll untuk zoom · Drag / Klik Kanan untuk geser</div>
 <svg fill="none" height="1023" id="main-svg" viewbox="0 0 1427 1023" width="1427" xmlns="http://www.w3.org/2000/svg">
 <g filter="url(#filter0_dd_4_86)">
 <rect fill="white" height="989.53" rx="8" width="1465" x="-27"></rect>
