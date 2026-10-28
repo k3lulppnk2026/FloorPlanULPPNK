@@ -336,8 +336,27 @@ kbd {
   min-height: 90px;
   resize: vertical;
 }
-#evacuation-routes.is-active, #safety-markers.is-active {
-  opacity: 1;
+#evacuation-routes:not(.is-active),
+#safety-markers:not(.is-active) {
+  display: none !important;
+  opacity: 0 !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
+#evacuation-routes.is-active,
+#safety-markers.is-active {
+  display: block !important;
+  opacity: 1 !important;
+  visibility: visible !important;
+}
+#you-here-active:not(.active) {
+  display: none !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+#you-here-active.active {
+  display: block !important;
+  opacity: 1 !important;
 }
 .evac-origin-points circle {
   filter: drop-shadow(0 1px 2px rgba(22,101,52,.22));
@@ -1376,27 +1395,7 @@ header {
    4. Manual Evacuation Routes, Custom Areas & QR View Switcher
    ========================================================================== */
 /* Manual Evacuation Routes & Custom Rooms/Zones */
-#v6-manual-evac-layer .v6-manual-route,
-#v6-manual-evac-layer .v6-manual-draw,
-#v6-manual-evac-layer .v36-manual-route {
-  fill: none;
-  stroke: #059669;
-  stroke-width: 2.35;
-  stroke-dasharray: 8 7;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  vector-effect: non-scaling-stroke;
-  filter: drop-shadow(0 1px 2px rgba(5,150,105,.14));
-  cursor: pointer;
-  pointer-events: stroke;
-  will-change: opacity;
-}
-#v6-manual-evac-layer .v6-manual-route.selected,
-#v6-manual-evac-layer .v36-manual-route.selected {
-  stroke: #047857;
-  stroke-width: 2.85;
-  filter: drop-shadow(0 0 4px rgba(5,150,105,.32));
-}
+/* Unified Evacuation Backend renders all routes directly inside #evacuation-routes */
 #v6-map-area-layer {
   opacity: 1;
 }
@@ -3319,7 +3318,9 @@ body:not(.v6-admin) #btn-qr-starts,
 body:not(.v6-admin) #btn-detail-edit-room,
 body:not(.v6-admin) #btn-detail-inspect,
 body:not(.v6-admin) .k3-action-grid,
-body:not(.v6-admin) #map-editor-panel {
+body:not(.v6-admin) #map-editor-panel,
+body:not(.v6-admin) .admin-only-control,
+body:not(.v6-admin) #mobile-studio-fab {
   display: none !important;
 }
 body:not(.v6-admin) #btn-detail-evac-route {
@@ -3970,12 +3971,16 @@ body.v6-admin > header .v6-admin-entry {
 }
 
 /* Unified Evacuation Backend Selected Segment & Sync Toolbar Button */
-body.map-editor-active #evacuation-routes .evac-route.evac-route-selected {
+body.map-editor-active #evacuation-routes.is-active .evac-route.evac-route-selected {
   stroke: #0284c7 !important;
   stroke-width: 5.2 !important;
   filter: drop-shadow(0 0 8px rgba(2, 132, 199, 0.55));
 }
-#evacuation-routes .evac-active-route-path {
+#evacuation-routes.is-active .evac-route.evac-route-custom {
+  stroke: #059669;
+  stroke-dasharray: 5 4;
+}
+#evacuation-routes.is-active .evac-active-route-path {
   fill: none !important;
   stroke: #059669 !important;
   stroke-width: 4px !important;

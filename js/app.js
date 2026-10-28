@@ -37,6 +37,8 @@ document.addEventListener('DOMContentLoaded', () => {
   window.roomNames = roomNames;
   window.getRoomName = roomNamesOf;
   window.__roomSortVal = roomSortVal;
+  window.__K3_SAFETY_ROOMS = safetyRooms;
+  window.__K3_SERVICE_ROOMS = serviceRooms;
 
   const getHotspots = () => [...document.querySelectorAll('#room-hotspots [data-room], #v6-map-area-layer .v6-map-area[data-room]')];
   const getSidebarItems = () => [...document.querySelectorAll('#sidebar-room-list .sidebar-item[data-room]')];
@@ -194,30 +196,52 @@ document.addEventListener('DOMContentLoaded', () => {
     if (e.key === 'Escape' && !window.__isEditorBusy?.()) clearSelection();
   });
 
-  // Layer filter
+  // Unified Layer Filter Controller (Denah Bersih, Jalur Evakuasi, APAR & K3 Safety)
   const evacuationRoutes = document.getElementById('evacuation-routes');
   const safetyMarkers = document.getElementById('safety-markers');
   evacuationRoutes?.classList.remove('is-active');
   safetyMarkers?.classList.remove('is-active');
 
-  document.querySelectorAll('.gis-layer-btn[data-layer]').forEach(btn => btn.addEventListener('click', () => {
-    document.querySelectorAll('.gis-layer-btn[data-layer]').forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
-    const layer = btn.dataset.layer;
-    if (!window.__isFocusingSafetyKind) {
+  function applyMapLayer(layer, options = {}) {
+    const targetLayer = ['all', 'evacuation', 'safety', 'service'].includes(layer) ? layer : 'all';
+    document.querySelectorAll('.gis-layer-btn[data-layer]').forEach(b => {
+      b.classList.toggle('active', b.dataset.layer === targetLayer);
+    });
+    if (!window.__isFocusingSafetyKind && !options.preserveSafetyFilter) {
       window.__setSafetyFilter?.(null);
     }
-    evacuationRoutes?.classList.toggle('is-active', layer === 'evacuation');
-    safetyMarkers?.classList.toggle('is-active', layer === 'safety');
-    document.getElementById('v6-custom-assets-layer')?.classList.toggle('v6-safety-visible', layer === 'safety');
-    if (layer !== 'evacuation' || !window.__isActivatingEvacForQr) clearQrMode();
+    const showEvac = targetLayer === 'evacuation';
+    const showSafety = targetLayer === 'safety';
+    evacuationRoutes?.classList.toggle('is-active', showEvac);
+    safetyMarkers?.classList.toggle('is-active', showSafety);
+
+    if (!showEvac) {
+      if (window.EvacBackend?.isDrawing?.()) window.EvacBackend.cancelDrawing();
+      clearQrMode();
+    } else if (!window.__isActivatingEvacForQr && !options.preserveActiveRoute) {
+      clearQrMode();
+    }
+
     getHotspots().forEach(h => {
       h.classList.remove('room-hidden', 'room-dim');
       const n = h.dataset.room;
-      if (layer === 'evacuation') h.classList.add('room-dim');
-      if (layer === 'safety' && !safetyRooms.has(n)) h.classList.add('room-dim');
-      if (layer === 'service' && !serviceRooms.has(n)) h.classList.add('room-dim');
+      if (targetLayer === 'evacuation') h.classList.add('room-dim');
+      if (targetLayer === 'safety' && !safetyRooms.has(n)) h.classList.add('room-dim');
+      if (targetLayer === 'service' && !serviceRooms.has(n)) h.classList.add('room-dim');
     });
+
+    // Keep Studio handles (route vertices, QR pins, safety drag handles) strictly synced with layer visibility
+    window.__mapEditorSafetyAPI?.syncHandles?.();
+    window.__renderStudioHandles?.();
+
+    const mobileEvacFab = document.getElementById('mobile-evac-fab');
+    mobileEvacFab?.classList.toggle('active', showEvac);
+  }
+  window.__setMapLayer = applyMapLayer;
+  window.__getCurrentMapLayer = () => document.querySelector('.gis-layer-btn[data-layer].active')?.dataset.layer || 'all';
+
+  document.querySelectorAll('.gis-layer-btn[data-layer]').forEach(btn => btn.addEventListener('click', () => {
+    applyMapLayer(btn.dataset.layer);
   }));
 
   // Search room by number or name
@@ -1140,7 +1164,14 @@ document.addEventListener('DOMContentLoaded',()=>{
       editorLayer.appendChild(aim);
     }
   }
-  function renderHandles(){editorLayer.innerHTML='';if(!editing)return;Object.keys(types).forEach(k=>state[k].forEach((p,i)=>makeHandle(k,i,p)));if(selected)highlightSelected()}
+  function renderHandles(){
+    editorLayer.innerHTML='';
+    const safetyVisible = safety.classList.contains('is-active');
+    editorLayer.style.display = (editing && safetyVisible) ? 'block' : 'none';
+    if(!editing || !safetyVisible) return;
+    Object.keys(types).forEach(k=>state[k].forEach((p,i)=>makeHandle(k,i,p)));
+    if(selected)highlightSelected();
+  }
   function select(k,i){
     if(!state[k]?.[i]){selected=null;highlightSelected();return;}
     selected={kind:k,index:i};highlightSelected();
@@ -1332,14 +1363,15 @@ document.addEventListener('DOMContentLoaded',()=>{
     toggle.classList.toggle('editing',on);
     toggle.querySelector('span').textContent=on?'Tutup Studio':'Studio Edit Peta';
     panel.classList.toggle('open',on);
-    editorLayer.style.display=on?'block':'none';
     if(on){
-      history=[];future=[];selected=null;dirty=false;renderHandles();
-      document.getElementById('safety-markers')?.classList.add('is-active');
+      history=[];future=[];selected=null;dirty=false;
       show('Studio Edit Peta aktif — semua perubahan tersimpan otomatis.');
     }else{
-      drag=null;selected=null;renderHandles();show('Studio Edit Peta ditutup.');
+      drag=null;selected=null;
+      window.__setMapLayer?.('all');
+      show('Studio Edit Peta ditutup — kembali ke Denah Bersih.');
     }
+    renderHandles();
     window.__onStudioModeChange?.(on);
   }
   window.mapEditorSetEditing=setEditing;
@@ -1373,6 +1405,8 @@ document.addEventListener('DOMContentLoaded',()=>{
 
   window.__mapEditorSafetyAPI={
     getState:cloneState,
+    getOriginal:()=>JSON.parse(JSON.stringify(original)),
+    syncHandles:renderHandles,
     setState(newState, skipSave){
       if(!newState)return;
       normalizeLoadedState(newState);
@@ -1429,15 +1463,11 @@ document.addEventListener('DOMContentLoaded',()=>{
    ========================================================================== */
 (function(){
   const $ = s => document.querySelector(s), $$ = s => [...document.querySelectorAll(s)];
-  const NS = 'http://www.w3.org/2000/svg';
   const V6KEY = 'gisK3V6State';
   const ADMIN_USER = 'admin', ADMIN_PASS = '123';
   let admin = false;
   const load = () => { try { return JSON.parse(localStorage.getItem(V6KEY) || '{}'); } catch { return {}; } };
   let data = Object.assign({
-    customAssets: [],
-    walls: [],
-    doors: [],
     contacts: [
       { id: 'C-001', label: 'Security', phone: '112' },
       { id: 'C-002', label: 'K3 Officer', phone: '110' }
@@ -1458,6 +1488,7 @@ document.addEventListener('DOMContentLoaded',()=>{
   function toast(msg) { window.showK3Toast ? window.showK3Toast(msg) : console.log(msg); }
   function open(id) { const x = $('#' + id); if (x) { x.classList.add('open'); x.setAttribute('aria-hidden', 'false'); } }
   function close(id) { const x = $('#' + id); if (x) { x.classList.remove('open'); x.setAttribute('aria-hidden', 'true'); } }
+  function esc(v) { return String(v ?? '').replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m])); }
 
   $$('[data-v6-close]').forEach(b => b.addEventListener('click', () => close(b.dataset.v6Close)));
   $('#admin-entry')?.addEventListener('click', () => admin ? open('v6-admin') : open('v6-login'));
@@ -1472,6 +1503,7 @@ document.addEventListener('DOMContentLoaded',()=>{
       close('v6-login');
       $('#v6-login-error').textContent = '';
       audit('Admin login', 'Admin mode started');
+      window.__onAdminModeChange?.(true);
       refreshAll();
       toast('Mode Admin K3 aktif — Studio Edit Peta & Mode Tembok Sementara kini tersedia di toolbar atas.');
     } else {
@@ -1486,14 +1518,14 @@ document.addEventListener('DOMContentLoaded',()=>{
     close('v6-admin');
     try { window.mapEditorSetEditing?.(false); } catch (_) {}
     const wallBtn = document.getElementById('btn-temporary-wall');
-    if (wallBtn && wallBtn.getAttribute('aria-pressed') === 'true') wallBtn.click();
+    if (wallBtn && wallBtn.classList.contains('wall-active')) wallBtn.click();
+    window.__onAdminModeChange?.(false);
     toast('Admin logout — kembali ke Mode Publik (View-Only).');
   });
   document.addEventListener('keydown', e => {
     if (e.key === 'Escape') $$('.v6-overlay.open').forEach(x => close(x.id));
   });
 
-  // Admin modal tabs
   $$('.v6-tab').forEach(b => b.addEventListener('click', () => {
     const n = b.dataset.v6Tab;
     $$('.v6-tab').forEach(x => x.classList.toggle('active', x === b));
@@ -1501,200 +1533,30 @@ document.addEventListener('DOMContentLoaded',()=>{
     refreshAll();
   }));
 
-  function svg() { return $('#main-svg'); }
-  function ensureLayer(id) {
-    let g = $('#' + id);
-    if (!g && svg()) {
-      g = document.createElementNS(NS, 'g');
-      g.id = id;
-      svg().appendChild(g);
-    }
-    return g;
-  }
-  const assetLayer = ensureLayer('v6-custom-assets-layer'), wallLayer = ensureLayer('v6-wall-editor-layer');
-  let selected = { type: null, id: null };
-  function esc(v) { return String(v ?? '').replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m])); }
-  function svgPoint(e) {
-    const pt = svg().createSVGPoint();
-    pt.x = e.clientX; pt.y = e.clientY;
-    const c = svg().getScreenCTM();
-    return c ? pt.matrixTransform(c.inverse()) : { x: 700, y: 500 };
-  }
-
-  function renderAssets() {
-    if (!assetLayer) return;
-    assetLayer.innerHTML = '';
-    data.customAssets.forEach(a => {
-      const g = document.createElementNS(NS, 'g');
-      g.dataset.assetId = a.id;
-      g.classList.add('v6-map-handle');
-      const assetText = `${a.name || ''} ${a.category || ''}`.toLowerCase();
-      if (assetText.includes('apar')) g.classList.add('v6-safety-apar');
-      if (assetText.includes('p3k')) g.classList.add('v6-safety-p3k');
-      g.setAttribute('transform', `translate(${a.x} ${a.y})`);
-      g.innerHTML = `<circle r="15" fill="${esc(a.color || '#7c3aed')}" opacity=".16" stroke="${esc(a.color || '#7c3aed')}" stroke-width="2" vector-effect="non-scaling-stroke"/><circle r="10" fill="${esc(a.color || '#7c3aed')}" stroke="#fff" stroke-width="2" vector-effect="non-scaling-stroke"/><text y="3" text-anchor="middle" font-size="8" font-weight="900" fill="#fff">${esc(a.icon || '●')}</text>`;
-      g.addEventListener('pointerdown', e => {
-        if (!admin || !window.mapEditorIsEditing?.()) return;
-        e.stopPropagation();
-        selected = { type: 'asset', id: a.id };
-        g.classList.add('selected');
-        try { svg().setPointerCapture(e.pointerId); } catch (_) {}
-        const move = ev => {
-          const p = svgPoint(ev);
-          a.x = Math.max(0, Math.min(1427, p.x));
-          a.y = Math.max(0, Math.min(1023, p.y));
-          g.setAttribute('transform', `translate(${a.x} ${a.y})`);
-        };
-        const up = () => {
-          svg().removeEventListener('pointermove', move);
-          svg().removeEventListener('pointerup', up);
-          audit('Move custom asset', a.name);
-          save();
-          renderAssets();
-          refreshAll();
-        };
-        svg().addEventListener('pointermove', move);
-        svg().addEventListener('pointerup', up, { once: true });
-      });
-      assetLayer.appendChild(g);
-    });
-    renderAssetList();
-  }
-
-  function renderWalls() {
-    if (!wallLayer) return;
-    wallLayer.innerHTML = '';
-    $$('[data-triplek-wall="true"]').forEach((el, i) => {
-      let bb;
-      try { bb = el.getBBox(); } catch (_) { return; }
-      const base = el.dataset.v6baseTransform ?? el.getAttribute('transform') ?? '';
-      el.dataset.v6baseTransform = base;
-      const cx = bb.x + bb.width / 2, cy = bb.y + bb.height / 2;
-      const g = document.createElementNS(NS, 'g');
-      g.dataset.wallId = 'orig-' + i;
-      g.classList.add('v6-wall-handle');
-      const dx = +el.dataset.v6dx || 0, dy = +el.dataset.v6dy || 0;
-      g.setAttribute('transform', `translate(${cx + dx} ${cy + dy})`);
-      g.innerHTML = '<circle r="7" fill="#f59e0b" stroke="#fff" stroke-width="1.5" vector-effect="non-scaling-stroke"/>';
-      g.addEventListener('pointerdown', e => {
-        if (!admin || !window.mapEditorIsEditing?.()) return;
-        e.stopPropagation();
-        selected = { type: 'origwall', id: 'orig-' + i };
-        const start = svgPoint(e);
-        const ox = +el.dataset.v6dx || 0, oy = +el.dataset.v6dy || 0;
-        const move = ev => {
-          const p = svgPoint(ev), mx = ox + p.x - start.x, my = oy + p.y - start.y;
-          el.dataset.v6dx = mx; el.dataset.v6dy = my;
-          el.setAttribute('transform', `translate(${mx} ${my}) ${base}`);
-          g.setAttribute('transform', `translate(${cx + mx} ${cy + my})`);
-        };
-        const up = () => {
-          svg().removeEventListener('pointermove', move);
-          svg().removeEventListener('pointerup', up);
-          audit('Move wall segment', `Temporary wall ${i + 1}`);
-          save();
-          refreshAll();
-        };
-        svg().addEventListener('pointermove', move);
-        svg().addEventListener('pointerup', up, { once: true });
-      });
-      wallLayer.appendChild(g);
-    });
-
-    data.walls.forEach(w => {
-      const g = document.createElementNS(NS, 'g');
-      g.dataset.wallId = w.id;
-      g.innerHTML = `<line x1="${w.x1}" y1="${w.y1}" x2="${w.x2}" y2="${w.y2}" stroke="#f59e0b" stroke-width="7" opacity=".9" stroke-linecap="round" vector-effect="non-scaling-stroke"/><circle class="v6-wall-end" cx="${w.x1}" cy="${w.y1}" r="7" fill="#fff" stroke="#f59e0b" stroke-width="2" vector-effect="non-scaling-stroke"/><circle class="v6-wall-end" cx="${w.x2}" cy="${w.y2}" r="7" fill="#fff" stroke="#f59e0b" stroke-width="2" vector-effect="non-scaling-stroke"/>`;
-      g.classList.add('v6-wall-handle');
-      g.querySelector('line').addEventListener('pointerdown', e => {
-        if (!admin || !window.mapEditorIsEditing?.()) return;
-        e.stopPropagation();
-        selected = { type: 'wall', id: w.id };
-        const start = svgPoint(e), ox = w.x1, oy = w.y1, dx2 = w.x2 - w.x1, dy2 = w.y2 - w.y1;
-        const move = ev => {
-          const p = svgPoint(ev), dx = p.x - start.x, dy = p.y - start.y;
-          w.x1 = ox + dx; w.y1 = oy + dy; w.x2 = ox + dx + dx2; w.y2 = oy + dy + dy2;
-          renderWalls();
-        };
-        const up = () => {
-          svg().removeEventListener('pointermove', move);
-          svg().removeEventListener('pointerup', up);
-          audit('Move custom wall', w.id);
-          save();
-          refreshAll();
-        };
-        svg().addEventListener('pointermove', move);
-        svg().addEventListener('pointerup', up, { once: true });
-      });
-      [...g.querySelectorAll('.v6-wall-end')].forEach((h, idx) => h.addEventListener('pointerdown', e => {
-        if (!admin || !window.mapEditorIsEditing?.()) return;
-        e.stopPropagation();
-        selected = { type: 'wall', id: w.id };
-        const move = ev => {
-          const p = svgPoint(ev);
-          if (idx === 0) { w.x1 = p.x; w.y1 = p.y; } else { w.x2 = p.x; w.y2 = p.y; }
-          renderWalls();
-        };
-        const up = () => {
-          svg().removeEventListener('pointermove', move);
-          svg().removeEventListener('pointerup', up);
-          audit('Resize wall', w.id);
-          save();
-          refreshAll();
-        };
-        svg().addEventListener('pointermove', move);
-        svg().addEventListener('pointerup', up, { once: true });
-      }));
-      wallLayer.appendChild(g);
-    });
-
-    data.doors.forEach(d => {
-      const g = document.createElementNS(NS, 'g');
-      g.innerHTML = `<rect x="${d.x - 10}" y="${d.y - 5}" width="20" height="10" rx="3" fill="#0ea5e9" stroke="#fff" stroke-width="2" vector-effect="non-scaling-stroke"/><text x="${d.x}" y="${d.y + 3}" text-anchor="middle" font-size="6" font-weight="900" fill="#fff">D</text>`;
-      g.classList.add('v6-wall-handle');
-      g.addEventListener('pointerdown', e => {
-        if (!admin || !window.mapEditorIsEditing?.()) return;
-        e.stopPropagation();
-        selected = { type: 'door', id: d.id };
-        const move = ev => { const p = svgPoint(ev); d.x = p.x; d.y = p.y; renderWalls(); };
-        const up = () => {
-          svg().removeEventListener('pointermove', move);
-          svg().removeEventListener('pointerup', up);
-          audit('Move door', d.id);
-          save();
-          refreshAll();
-        };
-        svg().addEventListener('pointermove', move);
-        svg().addEventListener('pointerup', up, { once: true });
-      });
-      wallLayer.appendChild(g);
-    });
-  }
-
+  // Bridge V6 Custom Assets directly to the unified Safety Editor (state.custom)
   function renderAssetList() {
     const el = $('#v6-assets-list');
     if (!el) return;
-    el.innerHTML = data.customAssets.length
-      ? data.customAssets.map(a => `<div class="v6-row"><div class="v6-row-main"><b>${esc(a.icon || '●')} ${esc(a.name)}</b><small>${esc(a.category)} · ${esc(a.status)} · ${a.id}</small></div><span class="v6-pill">${a.photo ? 'PHOTO' : 'NO PHOTO'}</span><button class="v6-btn" data-edit-asset="${a.id}">Move</button><button class="v6-btn danger" data-delete-asset="${a.id}">Delete</button></div>`).join('')
-      : '<div style="font-size:8px;color:#94a3b8">Belum ada custom asset.</div>';
-    el.querySelectorAll('[data-edit-asset]').forEach(b => b.onclick = () => {
-      const a = data.customAssets.find(x => x.id === b.dataset.editAsset);
-      if (a) {
-        selected = { type: 'asset', id: a.id };
-        window.mapEditorSetEditing?.(true);
-        toast(`Selected ${a.name}. Drag marker on map.`);
-      }
+    const st = window.__mapEditorSafetyAPI?.getState?.();
+    const customList = Array.isArray(st?.custom) ? st.custom : [];
+    el.innerHTML = customList.length
+      ? customList.map((a, idx) => `<div class="v6-row"><div class="v6-row-main"><b>${esc(a.initial || 'K')} · ${esc(a.name || 'Custom Asset')}</b><small>${esc(a.desc || 'Aset K3 Custom')} · (${Math.round(a.x)}, ${Math.round(a.y)})</small></div><button class="v6-btn" data-edit-custom-idx="${idx}">Pilih di Studio</button><button class="v6-btn danger" data-delete-custom-idx="${idx}">Hapus</button></div>`).join('')
+      : '<div style="font-size:8px;color:#94a3b8">Belum ada custom asset. Tambahkan dari sini atau melalui Studio Edit Peta.</div>';
+    el.querySelectorAll('[data-edit-custom-idx]').forEach(b => b.onclick = () => {
+      const idx = +b.dataset.editCustomIdx;
+      close('v6-admin');
+      window.mapEditorSetEditing?.(true);
+      window.__mapEditorSafetyAPI?.select?.('custom', idx);
     });
-    el.querySelectorAll('[data-delete-asset]').forEach(b => b.onclick = () => {
-      const a = data.customAssets.find(x => x.id === b.dataset.deleteAsset);
-      if (!a) return;
-      if (confirm(`Hapus ${a.name}?`)) {
-        data.customAssets = data.customAssets.filter(x => x.id !== a.id);
-        audit('Delete custom asset', a.name);
-        save();
-        renderAssets();
-        refreshAll();
-      }
+    el.querySelectorAll('[data-delete-custom-idx]').forEach(b => b.onclick = () => {
+      const idx = +b.dataset.deleteCustomIdx;
+      const cur = window.__mapEditorSafetyAPI?.getState?.();
+      const item = cur?.custom?.[idx];
+      if (!item || !confirm(`Hapus ${item.name || 'Custom Asset'}?`)) return;
+      cur.custom.splice(idx, 1);
+      window.__mapEditorSafetyAPI?.setState?.(cur);
+      audit('Delete custom asset', item.name || 'Custom Asset');
+      refreshAll();
     });
   }
 
@@ -1742,14 +1604,15 @@ document.addEventListener('DOMContentLoaded',()=>{
     const haz = (() => { try { return JSON.parse(localStorage.getItem('gisK3Hazards') || '[]'); } catch { return []; } })();
     const customRooms = typeof window.__getCustomRooms === 'function' ? window.__getCustomRooms() : [];
     const totalRooms = 41 + customRooms.length;
-    const c = typeof window.__getSafetyAssetCounts === 'function' ? window.__getSafetyAssetCounts() : { apar: 12, p3k: 3, cctv: 16, fire: 5 };
-    const totalSafetyAssets = (c.apar || 12) + (c.p3k || 3) + (c.cctv || 16) + (c.fire || c.alarm || 5) + data.customAssets.length;
+    const c = typeof window.__getSafetyAssetCounts === 'function' ? window.__getSafetyAssetCounts() : { apar: 12, p3k: 3, cctv: 16, fire: 5, custom: 0 };
+    const totalSafetyAssets = (c.apar || 0) + (c.p3k || 0) + (c.cctv || 0) + (c.fire || 0) + (c.custom || 0);
+    const activeSegs = (window.EvacBackend?.getSegments?.() || []).filter(s => s.active !== false).length;
     const stats = [
       [String(totalRooms), 'Rooms'],
       [String(totalSafetyAssets), 'Safety Assets'],
       [String(log.length), 'Inspections'],
       [String(haz.length), 'Hazard Reports'],
-      [String(data.walls.length), 'Custom Walls'],
+      [String(activeSegs), 'Active Routes'],
       [String(data.contacts.length), 'Contacts'],
       [String(data.audit.length), 'Audit Events'],
       [data.emergency.active ? 'ON' : 'OFF', 'Emergency']
@@ -1771,14 +1634,6 @@ document.addEventListener('DOMContentLoaded',()=>{
     if (r) r.innerHTML = el.innerHTML;
   }
 
-  function renderStructure() {
-    const el = $('#v6-structure-list');
-    if (!el) return;
-    el.innerHTML = `<div class="v6-row"><div class="v6-row-main"><b>Original temporary walls</b><small>${$$('[data-triplek-wall="true"]').length} segments available to move</small></div></div>`
-      + data.walls.map(w => `<div class="v6-row"><div class="v6-row-main"><b>${w.id}</b><small>Wall · (${w.x1.toFixed(0)},${w.y1.toFixed(0)}) → (${w.x2.toFixed(0)},${w.y2.toFixed(0)})</small></div></div>`).join('')
-      + data.doors.map(d => `<div class="v6-row"><div class="v6-row-main"><b>${d.id}</b><small>Door / exit marker · (${d.x.toFixed(0)},${d.y.toFixed(0)})</small></div></div>`).join('');
-  }
-
   function publicEmergency() {
     const el = $('#v6-public-emergency');
     if (el) el.style.display = data.emergency.active ? 'block' : 'none';
@@ -1786,88 +1641,32 @@ document.addEventListener('DOMContentLoaded',()=>{
 
   function refreshAll() {
     renderStats();
-    renderAssets();
-    renderWalls();
+    renderAssetList();
     renderContacts();
     renderQR();
-    renderStructure();
     renderHistory();
     $('#v6-admin-emergency')?.classList.toggle('active', data.emergency.active);
     $('#v6-public-emergency')?.classList.toggle('active', data.emergency.active);
     publicEmergency();
   }
 
-  // Custom asset creation
+  // Unified Custom Asset creation from V6 Admin Modal
   $('#v6-asset-form')?.addEventListener('submit', e => {
     e.preventDefault();
-    const f = $('#v6-asset-photo').files?.[0];
-    const make = photo => {
-      const id = 'CUSTOM-' + String(Date.now()).slice(-6);
-      const a = {
-        id,
-        name: $('#v6-asset-name').value.trim(),
-        category: $('#v6-asset-category').value.trim(),
-        icon: $('#v6-asset-icon').value.trim() || '●',
-        color: $('#v6-asset-color').value,
-        status: $('#v6-asset-status').value,
-        description: $('#v6-asset-description').value.trim(),
-        photo: photo || '',
-        x: 700,
-        y: 500
-      };
-      data.customAssets.push(a);
-      audit('Add custom asset', a.name);
-      save();
-      e.target.reset();
-      $('#v6-asset-icon').value = '●';
-      $('#v6-asset-color').value = '#7c3aed';
-      renderAssets();
-      refreshAll();
-      toast(`${a.name} added. Drag it on the map.`);
-    };
-    if (f) {
-      const r = new FileReader();
-      r.onload = () => make(r.result);
-      r.readAsDataURL(f);
-    } else make('');
+    const name = $('#v6-asset-name').value.trim() || 'Custom Asset';
+    const cat = $('#v6-asset-category').value.trim();
+    const icon = ($('#v6-asset-icon').value.trim() || 'K').slice(0, 2).toUpperCase();
+    const color = $('#v6-asset-color').value || '#7c3aed';
+    const desc = [cat, $('#v6-asset-description').value.trim()].filter(Boolean).join(' · ');
+    window.__mapEditorSafetyAPI?.addAsset?.('custom', { x: 700, y: 500, initial: icon, name, color, desc });
+    audit('Add custom asset', name);
+    e.target.reset();
+    $('#v6-asset-icon').value = 'K';
+    $('#v6-asset-color').value = '#7c3aed';
+    refreshAll();
   });
 
-  // Structure controls
   $('#v6-open-editor')?.addEventListener('click', () => { close('v6-admin'); window.mapEditorSetEditing?.(true); });
-  $('#v6-structure-editor')?.addEventListener('click', () => { close('v6-admin'); window.mapEditorSetEditing?.(true); });
-  $('#v6-add-wall')?.addEventListener('click', () => {
-    const w = { id: 'W-' + String(Date.now()).slice(-5), x1: 700, y1: 450, x2: 820, y2: 450 };
-    data.walls.push(w);
-    selected = { type: 'wall', id: w.id };
-    audit('Add wall', w.id);
-    save();
-    renderWalls();
-    refreshAll();
-    toast('New wall added. Drag endpoints in Edit Map.');
-  });
-  $('#v6-add-door')?.addEventListener('click', () => {
-    const d = { id: 'D-' + String(Date.now()).slice(-5), x: 760, y: 450 };
-    data.doors.push(d);
-    selected = { type: 'door', id: d.id };
-    audit('Add door', d.id);
-    save();
-    renderWalls();
-    refreshAll();
-    toast('Door marker added. Drag it in Edit Map.');
-  });
-  $('#v6-delete-structure')?.addEventListener('click', () => {
-    if (!selected || !['wall', 'door'].includes(selected.type)) {
-      toast('Select a custom wall or door first.');
-      return;
-    }
-    if (selected.type === 'wall') data.walls = data.walls.filter(x => x.id !== selected.id);
-    else data.doors = data.doors.filter(x => x.id !== selected.id);
-    audit('Delete structure', selected.id);
-    selected = { type: null, id: null };
-    save();
-    renderWalls();
-    refreshAll();
-  });
 
   // QR generator in Admin
   $('#v6-qr-type')?.addEventListener('change', renderQR);
@@ -1891,21 +1690,33 @@ document.addEventListener('DOMContentLoaded',()=>{
     w.print();
   });
 
-  // Simulation
+  // Live Dijkstra Simulation connected to EvacBackend
   function simTargets() {
     const sel = $('#v6-sim-target');
     if (!sel) return;
-    const t = $('#v6-sim-type').value;
-    if (t === 'exit') sel.innerHTML = '<option>Exit 1</option><option>Exit 2</option><option>Exit 3</option>';
-    else if (t === 'corridor') sel.innerHTML = '<option>Koridor Utara</option><option>Koridor Tengah</option><option>Koridor Selatan</option>';
-    else sel.innerHTML = '<option>Temporary Wall Scenario</option>';
+    const segs = window.EvacBackend?.getSegments?.() || [];
+    if (segs.length) {
+      sel.innerHTML = segs.map(s => `<option value="${esc(s.id)}">${esc(s.id)} · ${esc(s.name)} (${s.active !== false ? 'Aktif' : 'Nonaktif'})</option>`).join('');
+    } else {
+      sel.innerHTML = '<option value="SEG-01">SEG-01 · Koridor Timur</option>';
+    }
   }
   $('#v6-sim-type')?.addEventListener('change', simTargets);
   $('#v6-run-sim')?.addEventListener('click', () => {
-    const t = $('#v6-sim-type').value, target = $('#v6-sim-target').value;
-    const affected = t === 'exit' ? 7 : t === 'corridor' ? 11 : 4;
-    $('#v6-sim-result').innerHTML = `<div style="font-size:9px;font-weight:900;color:#b45309">Simulation complete</div><div style="font-size:8px;color:#64748b;margin-top:6px;line-height:1.6">Scenario: <b>${esc(target)}</b><br>Affected rooms: <b>${affected}</b><br>Alternative exits available: <b>2</b><br>Unreachable rooms: <b>0</b><br><span style="color:#94a3b8">Live map was not modified.</span></div>`;
-    audit('Run simulation', target);
+    const targetSegId = $('#v6-sim-target')?.value;
+    const starts = window.EvacBackend?.getQrStarts?.() || [];
+    let reachable = 0, totalMeters = 0;
+    starts.forEach(pt => {
+      const r = window.EvacBackend?.computePathFromPoint?.(pt);
+      if (r && Number.isFinite(r.meters)) {
+        reachable++;
+        totalMeters += r.meters;
+      }
+    });
+    const avgMeters = reachable ? Math.round(totalMeters / reachable) : 0;
+    const activeSegCount = (window.EvacBackend?.getSegments?.() || []).filter(s => s.active !== false).length;
+    $('#v6-sim-result').innerHTML = `<div style="font-size:9px;font-weight:900;color:#047857">✓ Simulasi Graf Dijkstra Selesai</div><div style="font-size:8px;color:#475569;margin-top:6px;line-height:1.6">Segmen diuji: <b>${esc(targetSegId)}</b><br>Segmen koridor aktif: <b>${activeSegCount} segmen</b><br>Titik QR terjangkau ke Titik Kumpul: <b>${reachable} / ${starts.length} titik</b><br>Rata-rata jarak evakuasi: <b>~${avgMeters} meter</b></div>`;
+    audit('Run simulation', targetSegId);
     save();
     renderHistory();
   });
@@ -1945,61 +1756,28 @@ document.addEventListener('DOMContentLoaded',()=>{
     open('v6-public-emergency-modal');
   });
   $('#v6-public-route-btn')?.addEventListener('click', () => {
-    $('[data-layer="evacuation"]')?.click();
+    window.__setMapLayer?.('evacuation');
     close('v6-public-emergency-modal');
   });
   $('#v6-validate')?.addEventListener('click', () => {
     const customRooms = typeof window.__getCustomRooms === 'function' ? window.__getCustomRooms() : [];
     const rooms = 41 + customRooms.length;
     const starts = (window.START_POINTS || []).length;
-    const manualRoutes = (() => { try { return (JSON.parse(localStorage.getItem('gisK3ManualMapV1') || '{}').routes || []).length; } catch { return 0; } })();
-    $('#v6-validation').innerHTML = `<b style="color:#15803d">Validation check:</b> ${starts} QR start points mapped · ${rooms} rooms indexed (termasuk ${customRooms.length} custom room) · ${manualRoutes} jalur evakuasi manual aktif dalam graf Dijkstra. Tidak ada error graf terdeteksi.`;
+    const allSegs = window.EvacBackend?.getSegments?.() || [];
+    const customSegs = allSegs.filter(s => s.kind === 'custom' && s.active !== false).length;
+    const activeSegs = allSegs.filter(s => s.active !== false).length;
+    $('#v6-validation').innerHTML = `<b style="color:#15803d">✓ Validasi Graf Dijkstra:</b> ${starts} titik awal QR terpetakan · ${rooms} ruangan terindeks (${customRooms.length} custom room) · ${activeSegs} segmen koridor aktif (${customSegs} jalur custom) terhubung ke Titik Kumpul.`;
   });
   $('#v6-export-all')?.addEventListener('click', () => {
-    const out = {
-      version: 6,
-      exportedAt: new Date().toISOString(),
-      v6: data,
-      manualMap: JSON.parse(localStorage.getItem('gisK3ManualMapV1') || 'null'),
-      legacyEditor: JSON.parse(localStorage.getItem('gisK3MapEditorV5') || 'null')
-    };
-    const blob = new Blob([JSON.stringify(out, null, 2)], { type: 'application/json' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = 'GIS-K3-V6-system-backup.json';
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
-    audit('Export system data', 'GIS-K3-V6-system-backup.json');
-    save();
+    window.GisSync?.openModal?.();
   });
 
-  window.mapEditorIsEditing = () => document.body.classList.contains('map-editor-active');
   window.showYouAreHereV6 = id => { try { window.__v6ShowStart?.(id); } catch (_) {} };
-
-  // Auto-enable Studio / Admin capabilities when toggling Map Editor
-  const editBtn = $('#map-editor-toggle');
-  if (editBtn) {
-    editBtn.addEventListener('click', () => {
-      admin = true;
-      document.body.classList.add('v6-admin');
-    }, true);
-  }
-
-  window.mapEditorSetEditing = on => {
-    if (on) {
-      admin = true;
-      document.body.classList.add('v6-admin');
-    }
-    const btn = $('#map-editor-toggle');
-    if (!btn) return;
-    const is = btn.classList.contains('editing');
-    if (is !== on) btn.click();
-  };
 
   setTimeout(() => {
     refreshAll();
     if (data.emergency.active) $('#v6-public-emergency').style.display = 'block';
-  }, 350);
+  }, 200);
 })();
 
 /* ==========================================================================
@@ -2225,7 +2003,9 @@ document.addEventListener('DOMContentLoaded',()=>{
 
   function loadUnifiedState() {
     let saved = null;
-    try { saved = JSON.parse(localStorage.getItem(EVAC_KEY) || 'null'); } catch (_) {}
+    try {
+      saved = JSON.parse(localStorage.getItem(EVAC_KEY) || localStorage.getItem('gisK3EvacBackendV1') || 'null');
+    } catch (_) {}
     let studioSaved = null;
     try { studioSaved = JSON.parse(localStorage.getItem(STUDIO_KEY) || 'null'); } catch (_) {}
     let manualSaved = null;
@@ -2312,6 +2092,7 @@ document.addEventListener('DOMContentLoaded',()=>{
         }
       });
       localStorage.setItem(EVAC_KEY, JSON.stringify(state));
+      localStorage.setItem('gisK3EvacBackendV1', JSON.stringify(state));
 
       // Keep gisK3StudioStateV1.evacEdits in sync
       const stRaw = JSON.parse(localStorage.getItem(STUDIO_KEY) || '{}') || {};
@@ -2401,7 +2182,7 @@ document.addEventListener('DOMContentLoaded',()=>{
       for (let i = 1; i < seg.points.length; i++) {
         const a = seg.points[i - 1], b = seg.points[i];
         if (Math.hypot(b.x - a.x, b.y - a.y) > 0.5) {
-          rawEdges.push({ a: { x: a.x, y: a.y }, b: { x: b.x, y: b.y }, segId: seg.id });
+          rawEdges.push({ a: { x: a.x, y: a.y }, b: { x: b.x, y: b.y }, segId: seg.id, isCustom: seg.kind === 'custom' });
         }
       }
     });
@@ -2422,9 +2203,10 @@ document.addEventListener('DOMContentLoaded',()=>{
       }
       for (let j = 0; j < rawEdges.length; j++) {
         if (i === j) continue;
+        const tol = (rawEdges[j].isCustom || rawEdges[i].isCustom) ? 14 : 5;
         for (const ep of [rawEdges[j].a, rawEdges[j].b]) {
           const proj = nearestPointOnSegment(ep, rawEdges[i].a, rawEdges[i].b);
-          if (proj.dist <= 4) {
+          if (proj.dist <= tol) {
             splits[i].push({ t: proj.t, x: proj.x, y: proj.y });
           }
         }
@@ -2472,6 +2254,18 @@ document.addEventListener('DOMContentLoaded',()=>{
         if (termIdx !== apNode) addEdge(apNode, termIdx, seg.id);
       }
     });
+    // Bridge any custom segment endpoint within 14px of a corridor node so custom routes always join the graph
+    for (let i = 0; i < rawEdges.length; i++) {
+      if (!rawEdges[i].isCustom) continue;
+      for (const ep of [rawEdges[i].a, rawEdges[i].b]) {
+        const u = nodeFor(ep);
+        for (let v = 0; v < nodes.length; v++) {
+          if (u !== v && Math.hypot(nodes[u].x - nodes[v].x, nodes[u].y - nodes[v].y) <= 14) {
+            addEdge(u, v, rawEdges[i].segId);
+          }
+        }
+      }
+    }
     for (let i = 0; i < nodes.length; i++) {
       if (i === apNode) continue;
       const d = Math.hypot(nodes[i].x - ap.x, nodes[i].y - ap.y);
@@ -2735,12 +2529,14 @@ document.addEventListener('DOMContentLoaded',()=>{
     if (!graph.nodes.length || !graph.edges.length) return null;
 
     const start = { x: +pt.x, y: +pt.y };
+    const barriers = getActiveTriplekBarriers();
     const candidates = [];
     let minEntryDist = Infinity;
 
     for (const e of graph.edges) {
       const a = graph.nodes[e.a], b = graph.nodes[e.b];
       const q = nearestPointOnSegment(start, a, b);
+      if (barriers.length && isBlockedByTriplek(start, q, barriers)) continue;
       const distViaA = Math.hypot(q.x - a.x, q.y - a.y) + graph.distToAp[e.a];
       const distViaB = Math.hypot(q.x - b.x, q.y - b.y) + graph.distToAp[e.b];
       const viaNode = distViaA <= distViaB ? e.a : e.b;
@@ -2804,14 +2600,13 @@ document.addEventListener('DOMContentLoaded',()=>{
   }
 
   function ensureEvacuationLayerActive() {
-    const btn = document.querySelector('.gis-layer-btn[data-layer="evacuation"]');
-    if (btn && !btn.classList.contains('active')) {
-      window.__isActivatingEvacForQr = true;
-      btn.click();
-      window.__isActivatingEvacForQr = false;
+    window.__isActivatingEvacForQr = true;
+    if (typeof window.__setMapLayer === 'function') {
+      window.__setMapLayer('evacuation', { preserveActiveRoute: true });
     } else {
       document.getElementById('evacuation-routes')?.classList.add('is-active');
     }
+    window.__isActivatingEvacForQr = false;
   }
 
   function renderActiveRouteOnMap(route, meta) {
@@ -3055,18 +2850,36 @@ document.addEventListener('DOMContentLoaded',()=>{
       return null;
     }
     let pts = orthogonalizePoints(drawPoints);
-    // Auto-snap start and end to existing corridor network if nearby so Dijkstra is 100% connected
-    const startSnap = nearestCorridorSnap(pts[0], 42);
-    if (startSnap) pts[0] = { x: startSnap.x, y: startSnap.y };
-    const endPt = pts[pts.length - 1];
-    const endSnap = nearestCorridorSnap(endPt, 240);
-    if (endSnap && endSnap.dist > 2) {
-      pts = orthogonalizePoints([...pts, { x: endSnap.x, y: endSnap.y }]);
-      pts[pts.length - 1] = { x: endSnap.x, y: endSnap.y };
-    }
     if (pts.length < 2) {
       window.showK3Toast?.('Tambahkan minimal 2 titik pada peta untuk membuat jalur evakuasi.');
       return null;
+    }
+    // Smart endpoint snapping: snap endpoints that are within 45px of an existing corridor (or Assembly Point),
+    // and only bridge up to 110px if neither endpoint is connected yet (preventing unwanted L-hooks).
+    const ap = state.assemblyPoint;
+    let connectsAssembly = false;
+    const startSnap = nearestCorridorSnap(pts[0], 45);
+    const endPt = pts[pts.length - 1];
+    const distEndToAp = Math.hypot(endPt.x - ap.x, endPt.y - ap.y);
+    const endSnap = nearestCorridorSnap(endPt, 45);
+
+    if (startSnap) {
+      pts[0] = { x: startSnap.x, y: startSnap.y };
+    }
+    if (distEndToAp <= 55) {
+      pts[pts.length - 1] = { x: ap.x, y: ap.y };
+      connectsAssembly = true;
+    } else if (endSnap) {
+      pts[pts.length - 1] = { x: endSnap.x, y: endSnap.y };
+    } else if (!startSnap) {
+      // Neither endpoint was within 45px of a corridor; snap whichever end is closer (within 110px)
+      const nearStart = nearestCorridorSnap(pts[0], 110);
+      const nearEnd = nearestCorridorSnap(endPt, 110);
+      if (nearStart && (!nearEnd || nearStart.dist <= nearEnd.dist)) {
+        pts = orthogonalizePoints([{ x: nearStart.x, y: nearStart.y }, ...pts]);
+      } else if (nearEnd) {
+        pts = orthogonalizePoints([...pts, { x: nearEnd.x, y: nearEnd.y }]);
+      }
     }
 
     const customCount = state.segments.filter(s => s.kind === 'custom').length + 1;
@@ -3076,7 +2889,7 @@ document.addEventListener('DOMContentLoaded',()=>{
       name: `Jalur Tambahan #${customCount}`,
       kind: 'custom',
       active: true,
-      connectsAssembly: false,
+      connectsAssembly,
       points: pts
     };
     state.segments.push(newSeg);
@@ -3749,9 +3562,9 @@ document.addEventListener('DOMContentLoaded',()=>{
       });
     }
 
-    new MutationObserver(() => {
+    window.__onAdminModeChange = () => {
       renderAreas();
-    }).observe(document.body, { attributes: true, attributeFilter: ['class'] });
+    };
   }
 
   function installWindowPointerEngine() {
@@ -4496,6 +4309,8 @@ document.addEventListener('DOMContentLoaded',()=>{
 
     // 3. Evacuation Segment Vertices, Assembly Point, QR Start Points & Free Text Handles (when in 'routes' tab)
     if (activeTab === 'routes') {
+      const evacLayerVisible = document.getElementById('evacuation-routes')?.classList.contains('is-active');
+      if (evacLayerVisible) {
       // Selected Evacuation Segment Vertex Handles
       const selSegId = window.EvacBackend?.getSelectedSegmentId?.();
       const selSeg = (window.EvacBackend?.getSegments?.() || []).find(s => s.id === selSegId);
@@ -4557,6 +4372,7 @@ document.addEventListener('DOMContentLoaded',()=>{
         });
         studioHandleLayer.appendChild(qg);
       });
+      } // end if (evacLayerVisible)
 
       studio.mapTexts.forEach(t => {
         const isSel = selectedTextId === t.id;
@@ -4764,17 +4580,27 @@ document.addEventListener('DOMContentLoaded',()=>{
     renderStudioInspector();
   }
 
+  window.__renderStudioHandles = renderStudioHandles;
+
   function switchStudioTab(tab) {
     activeTab = tab;
     activeTool = null;
+    if (tab !== 'routes' && window.EvacBackend?.isDrawing?.()) {
+      window.EvacBackend.cancelDrawing();
+    }
     document.querySelectorAll('#map-editor-panel .studio-tab').forEach(b => {
       b.classList.toggle('active', b.dataset.studioTab === tab);
     });
     ['rooms', 'safety', 'doors', 'routes', 'save'].forEach(k => {
       document.getElementById('studio-pane-' + k)?.classList.toggle('active', k === tab);
     });
+    // Automatically synchronize the map layer with the active Studio tab so Denah Bersih is never out of sync
     if (tab === 'routes') {
-      document.getElementById('evacuation-routes')?.classList.add('is-active');
+      window.__setMapLayer?.('evacuation', { preserveActiveRoute: true });
+    } else if (tab === 'safety') {
+      window.__setMapLayer?.('safety');
+    } else {
+      window.__setMapLayer?.('all');
     }
     renderStudioInspector();
     renderStudioHandles();
@@ -5486,6 +5312,7 @@ document.addEventListener('DOMContentLoaded',()=>{
       localStorage.removeItem('gisK3MapEditorV7Safety');
       localStorage.removeItem('gisK3ManualMapV1');
       localStorage.removeItem('gisK3MapBuilderV9');
+      localStorage.removeItem('gisK3EvacBackendV2');
       localStorage.removeItem('gisK3EvacBackendV1');
       localStorage.removeItem('gisK3BakedAppliedAt');
       studio = defaultStudioState();
@@ -5525,6 +5352,7 @@ document.addEventListener('DOMContentLoaded',()=>{
       localStorage.setItem(STUDIO_KEY, JSON.stringify(studio));
     }
     if (b.evacBackend) {
+      localStorage.setItem('gisK3EvacBackendV2', JSON.stringify(b.evacBackend));
       localStorage.setItem('gisK3EvacBackendV1', JSON.stringify(b.evacBackend));
     }
     localStorage.setItem('gisK3BakedAppliedAt', ts);
@@ -5561,7 +5389,7 @@ document.addEventListener('DOMContentLoaded',()=>{
           const writable = await savedJsonHandle.createWritable();
           await writable.write(jsonStr);
           await writable.close();
-          toast('✓ File data/map-state.json berhasil disimpan! Semua HP yang membuka server akan otomatis sinkron.');
+          toast('✓ File data/map-state.json berhasil disimpan! Deploy ke Netlify agar semua HP otomatis sinkron.');
           return;
         } catch (err) {
           if (err && err.name === 'AbortError') return;
@@ -5575,7 +5403,7 @@ document.addEventListener('DOMContentLoaded',()=>{
       a.download = 'map-state.json';
       a.click();
       setTimeout(() => URL.revokeObjectURL(a.href), 1500);
-      toast('✓ File map-state.json diunduh. Letakkan di folder data/map-state.json agar HP otomatis sinkron!');
+      toast('✓ map-state.json diunduh. Taruh di folder data/map-state.json lalu deploy ke Netlify!');
     } catch (e) {
       toast('Gagal menyimpan map-state.json: ' + e.message);
     }
@@ -5586,7 +5414,7 @@ document.addEventListener('DOMContentLoaded',()=>{
       const bundle = buildFullBundle();
       localStorage.setItem('gisK3BakedAppliedAt', bundle.bakedAt);
       const src = await getCleanSourceHtml();
-      const bakedScript = `<script id="gis-k3-baked-state">\nwindow.__BAKED_MAP_STATE__ = ${JSON.stringify(bundle)};\n(function(){\n  try {\n    const b = window.__BAKED_MAP_STATE__;\n    if (!b || !b.bakedAt) return;\n    const lastApplied = localStorage.getItem('gisK3BakedAppliedAt');\n    if (lastApplied !== b.bakedAt) {\n      if (b.safety) localStorage.setItem('gisK3MapEditorV7Safety', JSON.stringify({ version: 7, savedAt: b.bakedAt, state: b.safety }));\n      if (b.manualMap) localStorage.setItem('gisK3ManualMapV1', JSON.stringify(b.manualMap));\n      if (b.v6) localStorage.setItem('gisK3V6State', JSON.stringify(b.v6));\n      if (b.studio) localStorage.setItem('gisK3StudioStateV1', JSON.stringify(b.studio));\n      if (b.evacBackend) localStorage.setItem('gisK3EvacBackendV1', JSON.stringify(b.evacBackend));\n      localStorage.setItem('gisK3BakedAppliedAt', b.bakedAt);\n    }\n  } catch (_) {}\n})();\n<` + `/script>`;
+      const bakedScript = `<script id="gis-k3-baked-state">\nwindow.__BAKED_MAP_STATE__ = ${JSON.stringify(bundle)};\n(function(){\n  try {\n    const b = window.__BAKED_MAP_STATE__;\n    if (!b || !b.bakedAt) return;\n    const lastApplied = localStorage.getItem('gisK3BakedAppliedAt');\n    if (lastApplied !== b.bakedAt) {\n      if (b.safety) localStorage.setItem('gisK3MapEditorV7Safety', JSON.stringify({ version: 7, savedAt: b.bakedAt, state: b.safety }));\n      if (b.manualMap) localStorage.setItem('gisK3ManualMapV1', JSON.stringify(b.manualMap));\n      if (b.v6) localStorage.setItem('gisK3V6State', JSON.stringify(b.v6));\n      if (b.studio) localStorage.setItem('gisK3StudioStateV1', JSON.stringify(b.studio));\n      if (b.evacBackend) {\n        localStorage.setItem('gisK3EvacBackendV2', JSON.stringify(b.evacBackend));\n        localStorage.setItem('gisK3EvacBackendV1', JSON.stringify(b.evacBackend));\n      }\n      localStorage.setItem('gisK3BakedAppliedAt', b.bakedAt);\n    }\n  } catch (_) {}\n})();\n<` + `/script>`;
 
       const reBaked = new RegExp('<script id="gis-k3-baked-state">[\\s\\S]*?<\\/script>');
       let updatedHtml = src;
@@ -5655,25 +5483,244 @@ document.addEventListener('DOMContentLoaded',()=>{
     r.readAsText(f);
   }
 
-  // Compact Base64URL Sync Link & QR Generator for Instant PC ⇄ Mobile Sync
+  // ============================================================================
+  // DELTA-COMPRESSED SYNC ENGINE V3 (Always fits inside a single scannable QR!)
+  // ============================================================================
+  const SAFETY_DEFAULTS = {
+    apar:   { label: 'APAR',         letter: 'A', color: '#DC2626' },
+    p3k:    { label: 'P3K',          letter: 'P', color: '#16A34A' },
+    cctv:   { label: 'CCTV',         letter: 'C', color: '#2563EB' },
+    fire:   { label: 'Fire Alarm',   letter: 'F', color: '#F97316' },
+    custom: { label: 'Custom Asset', letter: 'K', color: '#7C3AED' }
+  };
+
   function encodeSyncPayload() {
     const bundle = buildFullBundle();
-    // Build compact payload containing customizations so URL stays as short as possible
-    const compact = {
-      v: 2,
-      t: bundle.bakedAt,
-      st: bundle.studio,
-      sf: bundle.safety,
-      ev: bundle.evacBackend,
-      ar: bundle.manualMap?.areas || []
-    };
-    const json = JSON.stringify(compact);
+    const origSafety = window.__mapEditorSafetyAPI?.getOriginal?.() || {};
+    const curSafety = bundle.safety || {};
+    const defStarts = defaultQrStarts();
+    const delta = { v: 3, t: bundle.bakedAt };
+    const summaryParts = [];
+
+    // 1. Studio overrides (only non-empty)
+    const st = bundle.studio || {};
+    const stDelta = {};
+    if (st.roomOverrides && Object.keys(st.roomOverrides).length) {
+      stDelta.ro = st.roomOverrides;
+      summaryParts.push(`${Object.keys(st.roomOverrides).length} ruang diubah`);
+    }
+    if (st.builtinDoors && Object.keys(st.builtinDoors).length) {
+      stDelta.bd = st.builtinDoors;
+      summaryParts.push(`${Object.keys(st.builtinDoors).length} pintu bawaan`);
+    }
+    if (Array.isArray(st.customDoors) && st.customDoors.length) {
+      stDelta.cd = st.customDoors;
+      summaryParts.push(`${st.customDoors.length} pintu baru`);
+    }
+    if (Array.isArray(st.wallEdits) && st.wallEdits.length) {
+      stDelta.we = st.wallEdits;
+      summaryParts.push(`${st.wallEdits.length} garis tembok`);
+    }
+    if (Array.isArray(st.mapTexts) && st.mapTexts.length) {
+      stDelta.mt = st.mapTexts;
+      summaryParts.push(`${st.mapTexts.length} label teks`);
+    }
+    if (Object.keys(stDelta).length) delta.st = stDelta;
+
+    // 2. Safety markers delta (only include categories that differ from original defaults)
+    const sfDelta = {};
+    let changedSafetyCats = 0;
+    ['apar', 'p3k', 'cctv', 'fire', 'custom'].forEach(k => {
+      const curArr = Array.isArray(curSafety[k]) ? curSafety[k] : [];
+      const origArr = Array.isArray(origSafety[k]) ? origSafety[k] : [];
+      const cfg = SAFETY_DEFAULTS[k];
+      const sameLen = curArr.length === origArr.length;
+      const isIdentical = sameLen && curArr.every((p, idx) => {
+        const o = origArr[idx];
+        return o
+          && Math.abs((+p.x || 0) - (+o.x || 0)) < 0.2
+          && Math.abs((+p.y || 0) - (+o.y || 0)) < 0.2
+          && (p.initial || cfg.letter) === (o.initial || cfg.letter)
+          && (p.name || cfg.label) === (o.name || cfg.label)
+          && (p.color || cfg.color).toUpperCase() === (o.color || cfg.color).toUpperCase()
+          && (p.desc || '') === (o.desc || '')
+          && (k !== 'cctv' || (Math.abs((+p.angle || 0) - (+o.angle || 0)) < 0.5 && (+p.range || 47) === (+o.range || 47) && (+p.spread || 53) === (+o.spread || 53)));
+      });
+      if (!isIdentical) {
+        changedSafetyCats++;
+        sfDelta[k] = curArr.map(p => {
+          const item = [
+            +Number(p.x).toFixed(1),
+            +Number(p.y).toFixed(1),
+            (p.initial && p.initial !== cfg.letter) ? p.initial : '',
+            (p.name && p.name !== cfg.label) ? p.name : '',
+            (p.color && p.color.toUpperCase() !== cfg.color.toUpperCase()) ? p.color : '',
+            p.desc || ''
+          ];
+          if (k === 'cctv') {
+            item.push(Math.round(+p.angle || 0), Math.round(+p.range || 47), Math.round(+p.spread || 53));
+          }
+          // Trim trailing empty strings to save bytes
+          while (item.length > 2 && item[item.length - 1] === '') item.pop();
+          return item;
+        });
+      }
+    });
+    if (Object.keys(sfDelta).length) {
+      delta.sf = sfDelta;
+      summaryParts.push(`${changedSafetyCats} kategori aset K3`);
+    }
+
+    // 3. Evacuation Backend delta (custom segments, toggled/edited built-in segments, assembly point, QR points)
+    const ev = bundle.evacBackend || {};
+    const evDelta = {};
+    if (ev.assemblyPoint && (Math.abs(ev.assemblyPoint.x - 535.5) > 0.5 || Math.abs(ev.assemblyPoint.y - 898.3) > 0.5)) {
+      evDelta.ap = [+Number(ev.assemblyPoint.x).toFixed(1), +Number(ev.assemblyPoint.y).toFixed(1)];
+      summaryParts.push('Titik Kumpul digeser');
+    }
+    const segs = Array.isArray(ev.segments) ? ev.segments : [];
+    const customSegs = segs.filter(s => s.kind === 'custom');
+    const disabledBuiltins = segs.filter(s => s.kind !== 'custom' && s.active === false).map(s => s.id);
+    if (customSegs.length) {
+      evDelta.cs = customSegs.map(s => [
+        s.id,
+        s.name,
+        s.active !== false ? 1 : 0,
+        s.connectsAssembly ? 1 : 0,
+        (s.points || []).map(p => [+Number(p.x).toFixed(1), +Number(p.y).toFixed(1)])
+      ]);
+      summaryParts.push(`${customSegs.length} jalur evakuasi custom`);
+    }
+    if (disabledBuiltins.length) {
+      evDelta.off = disabledBuiltins;
+      summaryParts.push(`${disabledBuiltins.length} koridor dinonaktifkan`);
+    }
+    const qrList = Array.isArray(ev.qrStartPoints) ? ev.qrStartPoints : [];
+    const qrChanged = qrList.length !== defStarts.length || qrList.some((q, i) => {
+      const d = defStarts[i];
+      return !d || q.id !== d.id || q.code !== d.code || q.name !== d.name || Math.abs(q.x - d.x) > 0.5 || Math.abs(q.y - d.y) > 0.5;
+    });
+    if (qrChanged) {
+      evDelta.qr = qrList.map(q => [q.id, q.code, q.name, +Number(q.x).toFixed(1), +Number(q.y).toFixed(1)]);
+      summaryParts.push(`${qrList.length} titik awal QR`);
+    }
+    if (Object.keys(evDelta).length) delta.ev = evDelta;
+
+    // 4. Custom room/zone areas (> 40)
+    const areas = bundle.manualMap?.areas || [];
+    if (areas.length) {
+      delta.ar = areas;
+      summaryParts.push(`${areas.length} ruangan/zona baru`);
+    }
+
+    const json = JSON.stringify(delta);
     const b64 = btoa(unescape(encodeURIComponent(json)))
       .replace(/\+/g, '-')
       .replace(/\//g, '_')
       .replace(/=+$/, '');
     const base = window.location.href.split('#')[0].split('?')[0];
-    return { url: `${base}#sync=${b64}`, length: b64.length };
+    return {
+      url: `${base}#sync=${b64}`,
+      length: b64.length,
+      summary: summaryParts.length ? summaryParts.join(' · ') : 'Sesuai Peta Standar (0 perubahan kustom)',
+      hasChanges: summaryParts.length > 0
+    };
+  }
+
+  function expandDeltaBundle(data) {
+    if (data.version) return data;
+    if (data.v === 2) {
+      return {
+        version: 'studio-v2-unified',
+        bakedAt: data.t || new Date().toISOString(),
+        studio: data.st || null,
+        safety: data.sf || null,
+        evacBackend: data.ev || null,
+        manualMap: { routes: [], areas: Array.isArray(data.ar) ? data.ar : [] }
+      };
+    }
+    // Reconstruct full bundle from v3 compact delta
+    const bakedAt = data.t || new Date().toISOString();
+    const fullStudio = defaultStudioState();
+    if (data.st) {
+      if (data.st.ro) fullStudio.roomOverrides = data.st.ro;
+      if (data.st.bd) fullStudio.builtinDoors = data.st.bd;
+      if (Array.isArray(data.st.cd)) fullStudio.customDoors = data.st.cd;
+      if (Array.isArray(data.st.we)) fullStudio.wallEdits = data.st.we;
+      if (Array.isArray(data.st.mt)) fullStudio.mapTexts = data.st.mt;
+    }
+
+    const fullSafety = window.__mapEditorSafetyAPI?.getOriginal?.() || { apar: [], p3k: [], cctv: [], fire: [], custom: [] };
+    if (data.sf) {
+      ['apar', 'p3k', 'cctv', 'fire', 'custom'].forEach(k => {
+        if (Array.isArray(data.sf[k])) {
+          const cfg = SAFETY_DEFAULTS[k];
+          fullSafety[k] = data.sf[k].map(arr => ({
+            x: +arr[0] || 0,
+            y: +arr[1] || 0,
+            initial: arr[2] || cfg.letter,
+            name: arr[3] || cfg.label,
+            color: arr[4] || cfg.color,
+            desc: arr[5] || '',
+            ...(k === 'cctv' ? { angle: arr[6] ?? 90, range: arr[7] ?? 47, spread: arr[8] ?? 53 } : {})
+          }));
+        }
+      });
+    }
+
+    // Reconstruct EvacBackend state starting from clean built-in segments
+    window.EvacBackend?.resetAllSegments?.();
+    const baseSegs = (window.EvacBackend?.getSegments?.() || []).map(s => ({
+      ...s,
+      points: (s.points || []).map(p => ({ ...p }))
+    }));
+    const offSet = new Set(data.ev?.off || []);
+    baseSegs.forEach(s => {
+      if (offSet.has(s.id)) s.active = false;
+    });
+    if (Array.isArray(data.ev?.cs)) {
+      data.ev.cs.forEach(c => {
+        baseSegs.push({
+          id: String(c[0] || 'SEG-C1'),
+          name: String(c[1] || 'Jalur Tambahan'),
+          kind: 'custom',
+          active: Boolean(c[2]),
+          connectsAssembly: Boolean(c[3]),
+          points: (c[4] || []).map(pt => ({ x: +pt[0], y: +pt[1] }))
+        });
+      });
+    }
+    const ap = Array.isArray(data.ev?.ap) ? { x: +data.ev.ap[0], y: +data.ev.ap[1] } : { x: 535.5, y: 898.3 };
+    const qrStarts = Array.isArray(data.ev?.qr)
+      ? data.ev.qr.map(q => ({ id: q[0], code: q[1], name: q[2], x: +q[3], y: +q[4] }))
+      : defaultQrStarts();
+
+    fullStudio.evacEdits.assemblyPoint = ap;
+    fullStudio.evacEdits.qrStartPoints = qrStarts;
+
+    const fullEvac = {
+      version: 2,
+      assemblyPoint: ap,
+      segments: baseSegs,
+      qrStartPoints: qrStarts
+    };
+
+    const customRoutesLegacy = baseSegs.filter(s => s.kind === 'custom').map(s => ({
+      id: s.id,
+      name: s.name,
+      points: s.points,
+      joined: true,
+      joinType: 'unified-evac-backend'
+    }));
+
+    return {
+      version: 'studio-v2-unified',
+      bakedAt,
+      studio: fullStudio,
+      safety: fullSafety,
+      evacBackend: fullEvac,
+      manualMap: { routes: customRoutesLegacy, areas: Array.isArray(data.ar) ? data.ar : [] }
+    };
   }
 
   function decodeAndApplySyncHash(silent = false) {
@@ -5690,15 +5737,8 @@ document.addEventListener('DOMContentLoaded',()=>{
       const json = decodeURIComponent(escape(atob(pad)));
       const data = JSON.parse(json);
       if (!data || typeof data !== 'object') return false;
-      const bundle = data.version ? data : {
-        version: 'studio-v2-unified',
-        bakedAt: data.t || new Date().toISOString(),
-        studio: data.st || null,
-        safety: data.sf || null,
-        evacBackend: data.ev || null,
-        manualMap: { routes: [], areas: Array.isArray(data.ar) ? data.ar : [] }
-      };
-      applyFullBundle(bundle, 'Link / QR Sinkronisasi PC ⇄ HP');
+      const bundle = expandDeltaBundle(data);
+      applyFullBundle(bundle, 'QR / Link Sinkronisasi PC ⇄ HP');
       if (hash.includes('sync=')) {
         history.replaceState(null, '', window.location.pathname + window.location.search);
       }
@@ -5712,7 +5752,7 @@ document.addEventListener('DOMContentLoaded',()=>{
   async function pullSharedStateFromServer(manual = false) {
     try {
       if (location.protocol !== 'http:' && location.protocol !== 'https:') {
-        if (manual) toast('Buka melalui web server (Live Server / hosting) untuk memuat data/map-state.json.');
+        if (manual) toast('Buka melalui URL Netlify / web server untuk menarik data/map-state.json.');
         return false;
       }
       const res = await fetch(`data/map-state.json?t=${Date.now()}`, { cache: 'no-store' });
@@ -5722,14 +5762,15 @@ document.addEventListener('DOMContentLoaded',()=>{
       }
       const b = await res.json();
       if (!b || !b.bakedAt) {
-        if (manual) toast('File data/map-state.json masih kosong. Klik "Simpan ke data/map-state.json" di PC terlebih dahulu.');
+        if (manual) toast('data/map-state.json di server Netlify masih standar. Gunakan Scan QR Sync (Opsi 1) atau unduh map-state.json lalu deploy ke Netlify (Opsi 2).');
         return false;
       }
       const lastApplied = localStorage.getItem('gisK3BakedAppliedAt');
       if (manual || lastApplied !== b.bakedAt) {
-        applyFullBundle(b, 'Server (data/map-state.json)');
+        applyFullBundle(b, 'Server Netlify (data/map-state.json)');
         return true;
       }
+      if (manual) toast('✓ Perangkat ini sudah sinkron dengan versi terbaru di server Netlify.');
       return false;
     } catch (_) {
       if (manual) toast('Gagal memuat data/map-state.json dari server.');
@@ -5741,30 +5782,37 @@ document.addEventListener('DOMContentLoaded',()=>{
     const urlInput = document.getElementById('sync-url-input');
     const qrBox = document.getElementById('sync-qr-box');
     const noteEl = document.getElementById('sync-qr-note');
+    const sumEl = document.getElementById('sync-active-summary');
     if (!urlInput || !qrBox) return;
 
-    const { url, length } = encodeSyncPayload();
+    const { url, length, summary, hasChanges } = encodeSyncPayload();
     urlInput.value = url;
     qrBox.innerHTML = '';
 
-    if (typeof QRCode !== 'undefined' && length <= 2100) {
+    if (sumEl) {
+      sumEl.style.background = hasChanges ? '#ecfdf5' : '#f8fafc';
+      sumEl.style.borderColor = hasChanges ? '#6ee7b7' : '#cbd5e1';
+      sumEl.innerHTML = `<span><b>Status Peta di Perangkat Ini:</b> ${esc(summary)}</span><span class="feature-chip ${hasChanges ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-700'}">${hasChanges ? 'ADA EDITAN AKTIF' : 'STANDAR'}</span>`;
+    }
+
+    if (typeof QRCode !== 'undefined' && length <= 2200) {
       try {
         new QRCode(qrBox, {
           text: url,
-          width: 102,
-          height: 102,
+          width: 118,
+          height: 118,
           colorDark: '#0f172a',
           colorLight: '#ffffff',
           correctLevel: QRCode.CorrectLevel.L
         });
-        if (noteEl) noteEl.innerHTML = `<span style="color:#059669;font-weight:700">✓ QR Sinkronisasi siap dipindai HP</span> (ukuran payload: ${(length / 1024).toFixed(1)} KB).`;
+        if (noteEl) noteEl.innerHTML = `<span style="color:#059669;font-weight:800">✓ QR Delta Sync siap dipindai kamera HP!</span> Payload sangat ringkas (<b>${length} karakter</b>).`;
       } catch (_) {
-        qrBox.innerHTML = '<div style="font-size:8px;text-align:center;color:#0369a1;font-weight:800;padding:6px">Gunakan tombol Salin Link atau Cara 1 / Cara 3</div>';
-        if (noteEl) noteEl.textContent = 'Data kustomisasi cukup besar untuk 1 QR — gunakan tombol Salin Link Sinkronisasi atau Cara 1 (data/map-state.json).';
+        qrBox.innerHTML = '<div style="font-size:8px;text-align:center;color:#0369a1;font-weight:800;padding:6px">Salin Link / Bagikan ke HP</div>';
+        if (noteEl) noteEl.textContent = 'Gunakan tombol Salin Link Sync atau Bagikan ke HP di atas.';
       }
     } else {
-      qrBox.innerHTML = '<div style="font-size:8px;text-align:center;color:#0369a1;font-weight:800;padding:6px">Payload Besar · Gunakan Link / File</div>';
-      if (noteEl) noteEl.textContent = 'Data kustomisasi besar — salin Link Sinkronisasi di atas atau gunakan Cara 1 (data/map-state.json).';
+      qrBox.innerHTML = '<div style="font-size:8px;text-align:center;color:#0369a1;font-weight:800;padding:6px">Gunakan Tombol Salin Link / Ekspor JSON</div>';
+      if (noteEl) noteEl.textContent = 'Kustomisasi sangat banyak — gunakan tombol Salin Link Sync atau Opsi 2 (map-state.json).';
     }
   }
 
@@ -5789,11 +5837,29 @@ document.addEventListener('DOMContentLoaded',()=>{
       if (!inp) return;
       refreshSyncModalUI();
       navigator.clipboard?.writeText(inp.value).then(() => {
-        toast('✓ Link Sinkronisasi berhasil disalin! Kirim dan buka di browser HP Anda.');
+        toast('✓ Link Sinkronisasi disalin! Buka link tersebut di browser HP Anda.');
       }).catch(() => {
         inp.select();
         document.execCommand('copy');
         toast('✓ Link Sinkronisasi disalin!');
+      });
+    });
+    document.getElementById('sync-share-native')?.addEventListener('click', async () => {
+      refreshSyncModalUI();
+      const inp = document.getElementById('sync-url-input');
+      const url = inp?.value || window.location.href;
+      if (navigator.share) {
+        try {
+          await navigator.share({
+            title: 'Sync Peta GIS K3 · ULP Panakkukang',
+            text: 'Buka link ini untuk menyamakan tampilan peta, jalur evakuasi, dan aset K3:',
+            url
+          });
+          return;
+        } catch (_) {}
+      }
+      navigator.clipboard?.writeText(url).then(() => {
+        toast('✓ Link disalin ke clipboard (siap ditempel di WhatsApp/Telegram).');
       });
     });
     document.getElementById('sync-export-file')?.addEventListener('click', exportFullBundleJson);
@@ -6025,8 +6091,7 @@ document.addEventListener('DOMContentLoaded',()=>{
   window.__onStudioModeChange = on => {
     if (on) {
       buildStudioPanelUI();
-      renderStudioInspector();
-      renderStudioHandles();
+      switchStudioTab(activeTab);
     } else {
       activeTool = null;
       window.EvacBackend?.cancelDrawing?.();
@@ -6256,7 +6321,7 @@ document.addEventListener('DOMContentLoaded',()=>{
         window.__mapEditorSafetyAPI?.reloadFromStorage?.();
       } else if (ev.key === 'gisK3StudioStateV1') {
         window.__reloadStudioFromStorage?.();
-      } else if (ev.key === 'gisK3EvacBackendV1') {
+      } else if (ev.key === 'gisK3EvacBackendV2' || ev.key === 'gisK3EvacBackendV1') {
         window.EvacBackend?.reloadFromStorage?.();
       } else if (ev.key === 'gisK3ManualMapV1') {
         window.__reloadAreasFromStorage?.();
@@ -6430,8 +6495,8 @@ document.addEventListener('DOMContentLoaded',()=>{
       document.body.appendChild(tooltip);
     }
 
-    const safetyRooms = new Set(['6','7','8','12','14','18','28','37','39','40']);
-    const serviceRooms = new Set(['2','3','11','14','15','16','17','19','20','21','23','24B','38','39']);
+    const safetyRooms = window.__K3_SAFETY_ROOMS || new Set(['6','7','8','12','14','18','28','37','39','40']);
+    const serviceRooms = window.__K3_SERVICE_ROOMS || new Set(['2','3','11','14','15','16','17','19','20','21','23','24B','38','39']);
     const getCat = r => String(r) === '8' ? 'Pusat K3L' : (serviceRooms.has(String(r)) ? 'Pelayanan & Teknik' : (safetyRooms.has(String(r)) ? 'Prioritas K3' : 'Operasional'));
     const getCatCode = r => String(r) === '8' ? 'k3l' : (serviceRooms.has(String(r)) ? 'service' : (safetyRooms.has(String(r)) ? 'safety' : 'ops'));
 

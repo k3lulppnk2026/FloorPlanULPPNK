@@ -772,8 +772,6 @@
 <circle class="evac-assembly-pulse" cx="535.5" cy="898.3" fill="none" r="13" stroke="#059669" stroke-width="2" vector-effect="non-scaling-stroke"></circle>
 <circle cx="535.5" cy="898.3" fill="#059669" r="4.5" stroke="#FFFFFF" stroke-width="1.5" vector-effect="non-scaling-stroke"></circle>
 </g>
-<!-- QR PERSONAL ROUTE: kini dirender langsung di dalam #evacuation-routes oleh window.EvacBackend -->
-<g aria-label="Rute evakuasi personal dari titik QR" id="qr-route-layer" style="display:none"></g>
 <!-- PENANDA APAR, P3K, CCTV (+ ARAH SOROT) & FIRE ALARM -->
 <g aria-label="Penanda APAR dan P3K" id="safety-markers" opacity="0" pointer-events="none">
 <g class="marker-pulse marker-apar" fill="none" stroke="#DC2626" stroke-width="2" vector-effect="non-scaling-stroke">
@@ -896,13 +894,6 @@
 <!-- CUSTOM ASSETS: ikon K3 kustom (inisial, nama & warna sesuai input admin) -->
 <g aria-label="Penanda Custom" class="marker-pulse marker-custom" fill="none" stroke="#7C3AED" stroke-width="2" vector-effect="non-scaling-stroke"></g>
 <g aria-label="Penanda Custom" class="marker-labels" font-family="Inter, sans-serif" font-size="8" font-weight="900" text-anchor="middle"></g>
-</g>
-<g aria-label="Jalur evakuasi manual" id="v6-manual-evac-layer" opacity="0" pointer-events="none">
-<defs>
-<marker id="v6-manual-evac-arrow" markerheight="8" markerunits="strokeWidth" markerwidth="8" orient="auto" refx="6" refy="3">
-<path d="M0,0 L0,6 L7,3 z" fill="#059669"></path>
-</marker>
-</defs>
 </g>
 <g aria-label="Ruangan dan zona custom" id="v6-map-area-layer" opacity="1" pointer-events="none"></g>
 </svg>
@@ -1248,85 +1239,89 @@ window.__BAKED_MAP_STATE__ = null;
       if (b.manualMap) localStorage.setItem('gisK3ManualMapV1', JSON.stringify(b.manualMap));
       if (b.v6) localStorage.setItem('gisK3V6State', JSON.stringify(b.v6));
       if (b.studio) localStorage.setItem('gisK3StudioStateV1', JSON.stringify(b.studio));
-      if (b.evacBackend) localStorage.setItem('gisK3EvacBackendV1', JSON.stringify(b.evacBackend));
+      if (b.evacBackend) {
+        localStorage.setItem('gisK3EvacBackendV2', JSON.stringify(b.evacBackend));
+        localStorage.setItem('gisK3EvacBackendV1', JSON.stringify(b.evacBackend));
+      }
       localStorage.setItem('gisK3BakedAppliedAt', b.bakedAt);
     }
   } catch (_) {}
 })();
 </script>
-<!-- MODAL SINKRONISASI PC ⇄ MOBILE -->
+<!-- MODAL SINKRONISASI PC ⇄ MOBILE & NETLIFY -->
 <div aria-hidden="true" class="modal-backdrop" id="sync-devices-modal">
-<div class="modal-box" style="width:min(680px,calc(100vw - 24px));">
-<div class="modal-head">
+<div class="modal-box" style="width:min(660px,calc(100vw - 24px));max-height:calc(100dvh - 28px);display:flex;flex-direction:column;">
+<div class="modal-head" style="background:linear-gradient(135deg,#f0f9ff,#eef2ff);">
 <div>
-  <div class="text-[9px] font-extrabold uppercase tracking-[.16em] text-cyan-700">SINKRONISASI LINTAS PERANGKAT</div>
-  <h3 class="mt-1 text-sm font-extrabold text-slate-800">🔄 Sinkronisasi PC ⇄ Mobile (HP)</h3>
+  <div class="text-[9px] font-extrabold uppercase tracking-[.16em] text-cyan-700">SINKRONISASI LINTAS PERANGKAT &amp; NETLIFY</div>
+  <h3 class="mt-0.5 text-sm font-extrabold text-slate-800">🔄 Hub Sinkronisasi PC ⇄ HP (Mobile)</h3>
 </div>
-<button class="h-8 w-8 rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50" data-close-modal="sync-devices-modal">×</button>
+<button class="h-8 w-8 rounded-lg border border-slate-200 bg-white text-slate-500 hover:bg-slate-50" data-close-modal="sync-devices-modal">×</button>
 </div>
-<div class="modal-body" style="display:flex;flex-direction:column;gap:10px">
-  <div style="padding:10px 12px;border-radius:10px;background:#f0f9ff;border:1px solid #bae6fd;font-size:9px;line-height:1.55;color:#0c4a6e">
-    <b>Mengapa edit di PC belum otomatis muncul di HP?</b><br/>
-    Secara bawaan, perubahan disimpan di <code>localStorage</code> browser PC masing-masing. Agar HP dan PC menampilkan data yang <b>100% sama</b>, pilih salah satu dari <b>3 cara sinkronisasi</b> di bawah ini:
+<div class="modal-body custom-scroll" style="display:flex;flex-direction:column;gap:10px;overflow-y:auto;">
+  <!-- RINGKASAN PERUBAHAN AKTIF -->
+  <div id="sync-active-summary" style="padding:9px 12px;border-radius:10px;background:#f8fafc;border:1px solid #cbd5e1;font-size:8.5px;line-height:1.5;color:#334155;display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap">
+    <span>📦 Memeriksa status perubahan peta di browser ini...</span>
   </div>
 
-  <!-- CARA 1: SIMPAN KE FILE SERVER / PROJECT -->
-  <div class="feature-card" style="border-color:#bbf7d0;background:linear-gradient(135deg,#f0fdf4,#ffffff)">
+  <!-- OPSI 1: INSTAN KE HP VIA QR / LINK TERKOMPRESI (TANPA DEPLOY ULANG NETLIFY) -->
+  <div class="feature-card" style="border-color:#7dd3fc;background:linear-gradient(135deg,#ecfeff 0%,#ffffff 65%)">
     <div class="flex items-center justify-between gap-2">
       <div>
-        <div class="text-[8px] font-extrabold uppercase tracking-[.12em] text-emerald-700">CARA 1 · PALING DIREKOMENDASIKAN (OTOMATIS SEMUA HP)</div>
-        <h4 class="text-[11px] font-extrabold text-slate-800 mt-0.5">Simpan ke Folder Project (<code>data/map-state.json</code> / <code>index.html</code>)</h4>
+        <div class="text-[8px] font-extrabold uppercase tracking-[.12em] text-cyan-700">OPSI 1 · KIRIM INSTAN KE HP SEKARANG (TANPA UPDATE SERVER)</div>
+        <h4 class="text-[11.5px] font-extrabold text-slate-800 mt-0.5">📱 Scan QR atau Bagikan Link Singkat ke HP</h4>
       </div>
-      <span class="feature-chip bg-emerald-100 text-emerald-800">PERMANEN</span>
+      <span class="feature-chip bg-cyan-100 text-cyan-800">DELTA SYNC V3</span>
     </div>
-    <p class="text-[8.5px] leading-relaxed text-slate-600 mt-1.5">
-      Simpan state peta ke file <b><code>data/map-state.json</code></b> (atau <b><code>index.html</code></b>) di dalam folder project. Setiap kali HP membuka web ini di server yang sama, HP otomatis membaca file tersebut dan menyamakan seluruh ruangan, aset, &amp; jalur evakuasi!
+    <p class="text-[8.5px] leading-relaxed text-slate-600 mt-1">
+      Hanya mengirimkan <b>selisih perubahan (delta)</b> sehingga kode QR selalu ringkas dan langsung terbaca kamera HP. Saat dibuka di HP, seluruh jalur evakuasi custom, ruangan, dan aset K3 otomatis tersimpan di browser HP.
+    </p>
+    <div class="flex flex-col sm:flex-row items-center gap-3.5 mt-2.5">
+      <div id="sync-qr-box" class="qr-mini shrink-0" style="width:136px;height:136px;padding:8px;background:#fff;border:1.5px solid #7dd3fc;border-radius:12px;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 12px rgba(2,132,199,.08)"></div>
+      <div class="flex-1 min-w-0 w-full">
+        <label class="block text-[7.5px] font-extrabold uppercase tracking-wider text-slate-500 mb-1">Link Sinkronisasi Instan (Buka di Browser HP):</label>
+        <input type="text" id="sync-url-input" readonly class="w-full rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-[8.5px] font-mono text-slate-600" value=""/>
+        <div class="flex flex-wrap gap-1.5 mt-2">
+          <button type="button" class="action-btn primary" id="sync-copy-link" style="width:auto;padding:6px 11px;background:#0284c7">📋 Salin Link Sync</button>
+          <button type="button" class="action-btn" id="sync-share-native" style="width:auto;padding:6px 11px;border:1px solid #7dd3fc;background:#f0f9ff;color:#0369a1">📲 Bagikan ke HP / WA</button>
+          <button type="button" class="action-btn" id="sync-regen-link" style="width:auto;padding:6px 9px;border:1px solid #cbd5e1;background:#fff;color:#475569">↻ Refresh</button>
+        </div>
+        <div id="sync-qr-note" class="text-[7.5px] text-slate-500 mt-1.5 leading-relaxed"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- OPSI 2: PUBLIKASI PERMANEN KE NETLIFY (UNTUK SEMUA PENGUNJUNG) -->
+  <div class="feature-card" style="border-color:#bbf7d0;background:linear-gradient(135deg,#f0fdf4 0%,#ffffff 65%)">
+    <div class="flex items-center justify-between gap-2">
+      <div>
+        <div class="text-[8px] font-extrabold uppercase tracking-[.12em] text-emerald-700">OPSI 2 · SIMPAN PERMANEN DI HOSTING NETLIFY (SEMUA PENGUNJUNG OTOMATIS SINKRON)</div>
+        <h4 class="text-[11.5px] font-extrabold text-slate-800 mt-0.5">🌐 Update File Deployment Netlify (<code>data/map-state.json</code> / <code>index.html</code>)</h4>
+      </div>
+      <span class="feature-chip bg-emerald-100 text-emerald-800">NETLIFY READY</span>
+    </div>
+    <p class="text-[8.5px] leading-relaxed text-slate-600 mt-1">
+      Karena <b>Netlify</b> adalah static hosting, editan di browser PC belum mengubah file di server Netlify sampai Anda memperbarui file project. Unduh <b><code>map-state.json</code></b> (taruh di folder <code>data/</code>) atau <b><code>index.html</code></b> lalu deploy ke Netlify agar seluruh HP pengunjung otomatis memuat peta terbaru tanpa perlu scan QR Sync:
     </p>
     <div class="flex flex-wrap gap-2 mt-2.5">
-      <button type="button" class="action-btn primary" id="sync-save-json-project" style="width:auto;padding:7px 11px;background:#16a34a;border-color:#15803d">💾 Simpan ke data/map-state.json</button>
-      <button type="button" class="action-btn" id="sync-save-html-project" style="width:auto;padding:7px 11px;border-color:#86efac;color:#166534;background:#fff">💾 Simpan ke index.html</button>
-      <button type="button" class="action-btn" id="sync-pull-server-now" style="width:auto;padding:7px 11px">🔄 Muat Ulang dari Server Sekarang</button>
+      <button type="button" class="action-btn primary" id="sync-save-json-project" style="width:auto;padding:7px 11px;background:#16a34a;border-color:#15803d">💾 1. Unduh data/map-state.json</button>
+      <button type="button" class="action-btn" id="sync-save-html-project" style="width:auto;padding:7px 11px;border:1px solid #86efac;color:#166534;background:#fff">💾 Unduh index.html Mandiri</button>
+      <button type="button" class="action-btn" id="sync-pull-server-now" style="width:auto;padding:7px 11px;border:1px solid #cbd5e1;background:#f8fafc;color:#334155">🔄 Tarik State dari Server Netlify</button>
     </div>
   </div>
 
-  <!-- CARA 2: QR CODE / LINK TRANSFER INSTAN -->
-  <div class="feature-card" style="border-color:#a5f3fc;background:linear-gradient(135deg,#ecfeff,#ffffff)">
-    <div class="flex items-center justify-between gap-2">
+  <!-- OPSI 3: CADANGAN FILE JSON MANUAL -->
+  <div class="feature-card" style="padding:9px 11px">
+    <div class="flex flex-wrap items-center justify-between gap-2">
       <div>
-        <div class="text-[8px] font-extrabold uppercase tracking-[.12em] text-cyan-700">CARA 2 · INSTAN TANPA UBAH FILE SERVER</div>
-        <h4 class="text-[11px] font-extrabold text-slate-800 mt-0.5">Scan QR Sinkronisasi atau Salin Link Sync ke HP</h4>
+        <div class="text-[8px] font-extrabold uppercase tracking-[.12em] text-slate-500">OPSI 3 · CADANGAN FILE (.JSON)</div>
+        <div class="text-[9.5px] font-bold text-slate-700 mt-0.5">Kirim file konfigurasi via WhatsApp / Email lalu impor di perangkat lain</div>
       </div>
-      <span class="feature-chip bg-cyan-100 text-cyan-800">QR / LINK</span>
-    </div>
-    <p class="text-[8.5px] leading-relaxed text-slate-600 mt-1.5">
-      Pindai QR di bawah menggunakan kamera HP Anda, atau salin <b>Link Sinkronisasi</b> lalu buka di browser HP untuk langsung menerapkan seluruh editan dari PC ini.
-    </p>
-    <div class="flex flex-col sm:flex-row items-center gap-3 mt-2.5">
-      <div id="sync-qr-box" class="qr-mini shrink-0" style="width:116px;height:116px;padding:6px;background:#fff;border:1px solid #bae6fd;border-radius:10px;display:flex;align-items:center;justify-content:center"></div>
-      <div class="flex-1 min-w-0 w-full">
-        <input type="text" id="sync-url-input" readonly class="w-full rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-[8.5px] font-mono text-slate-600" value=""/>
-        <div class="flex flex-wrap gap-2 mt-2">
-          <button type="button" class="action-btn primary" id="sync-copy-link" style="width:auto;padding:6px 10px">📋 Salin Link Sinkronisasi</button>
-          <button type="button" class="action-btn" id="sync-regen-link" style="width:auto;padding:6px 10px">↻ Perbarui QR / Link</button>
-        </div>
-        <div id="sync-qr-note" class="text-[7.5px] text-slate-500 mt-1.5"></div>
+      <div class="flex flex-wrap gap-1.5">
+        <button type="button" class="action-btn" id="sync-export-file" style="width:auto;padding:5px 9px;border:1px solid #cbd5e1;background:#f8fafc;color:#334155">⇩ Ekspor .json</button>
+        <button type="button" class="action-btn primary" id="sync-import-file-btn" style="width:auto;padding:5px 9px;background:#475569">⇧ Impor .json</button>
+        <input type="file" id="sync-import-file-input" accept="application/json" hidden/>
       </div>
-    </div>
-  </div>
-
-  <!-- CARA 3: KIRIM FILE JSON (WHATSAPP / TELEGRAM) -->
-  <div class="feature-card">
-    <div class="flex items-center justify-between gap-2">
-      <div>
-        <div class="text-[8px] font-extrabold uppercase tracking-[.12em] text-slate-500">CARA 3 · FILE CADANGAN MANUAL</div>
-        <h4 class="text-[11px] font-extrabold text-slate-800 mt-0.5">Ekspor di PC → Impor di HP</h4>
-      </div>
-      <span class="feature-chip bg-slate-100 text-slate-700">JSON</span>
-    </div>
-    <div class="flex flex-wrap gap-2 mt-2">
-      <button type="button" class="action-btn" id="sync-export-file" style="width:auto;padding:6px 10px">⇩ Unduh File Sync (.json)</button>
-      <button type="button" class="action-btn primary" id="sync-import-file-btn" style="width:auto;padding:6px 10px">⇧ Impor File Sync (.json) di Perangkat Ini</button>
-      <input type="file" id="sync-import-file-input" accept="application/json" hidden/>
     </div>
   </div>
 </div>
