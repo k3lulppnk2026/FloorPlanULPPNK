@@ -563,21 +563,39 @@ document.addEventListener('DOMContentLoaded', () => {
   svg.addEventListener('touchend', endPinch);
   svg.addEventListener('touchcancel', endPinch);
 
-  // 1-Finger / Left-Click Pan (in normal mode) + Right-Click Mouse Drag Pan (in Studio Editor Mode & normal mode!)
-  let panButton = 0;
+  // 1-Finger / Left-Click Pan (in normal mode) + Strict HOLD Right-Click Mouse Drag Pan (in Editor Mode & normal mode)
+  let panButton = -1;
 
-  // Suppress browser context menu on the map when right-click dragging or when Studio Edit Peta is active
+  function stopMapPan() {
+    if (isPanningMap && panPointerId !== null && panButton === 0) {
+      try { svg.releasePointerCapture?.(panPointerId); } catch (_) {}
+    }
+    if (isPanningMap) {
+      setTimeout(() => { window.__wasMapDragging = false; }, 60);
+    } else {
+      window.__wasMapDragging = false;
+    }
+    isPanningMap = false;
+    panButton = -1;
+    downPointer = null;
+    lastPointer = null;
+    svg.classList.remove('is-panning');
+    panPointerId = null;
+  }
+
+  // Suppress browser context menu on the map; if right button is released, ensure pan stops immediately
   svg.addEventListener('contextmenu', e => {
     e.preventDefault();
+    if (!e.buttons || (e.buttons & 2) === 0) stopMapPan();
   });
   mapWrapper?.addEventListener('contextmenu', e => {
     if (document.body.classList.contains('map-editor-active') || isPanningMap || window.__wasMapDragging) {
       e.preventDefault();
     }
+    if (!e.buttons || (e.buttons & 2) === 0) stopMapPan();
   });
 
-  // Capture-phase listener for Right-Click (e.button === 2) so right-click ALWAYS pans the map in Editor Mode,
-  // even when hovering over rooms, markers, doors, walls, or while a drawing tool is active!
+  // Capture-phase listener for Right-Click HOLD (e.button === 2)
   svg.addEventListener('pointerdown', e => {
     if (pinchActive) return;
     if (e.button === 2) {
@@ -590,7 +608,6 @@ document.addEventListener('DOMContentLoaded', () => {
       isPanningMap = true;
       window.__wasMapDragging = true;
       svg.classList.add('is-panning');
-      try { svg.setPointerCapture?.(e.pointerId); } catch (_) {}
       return;
     }
     if (!e.isPrimary || e.button !== 0 || mapZoom <= 1) return;
@@ -604,40 +621,48 @@ document.addEventListener('DOMContentLoaded', () => {
   }, true);
 
   window.addEventListener('pointermove', e => {
-    if (pinchActive || e.pointerId !== panPointerId || !lastPointer) return;
+    if (pinchActive || panPointerId === null || e.pointerId !== panPointerId || !lastPointer) return;
     if (panButton === 2) {
+      // Strictly HOLD-only: the instant the right mouse button (bit 2) is released, stop panning!
+      if ((e.buttons & 2) === 0) {
+        stopMapPan();
+        return;
+      }
       e.preventDefault();
       panByScreenDelta(e.clientX - lastPointer.x, e.clientY - lastPointer.y, true);
       lastPointer = { x: e.clientX, y: e.clientY };
       return;
     }
-    if (mapZoom <= 1 || window.__isEditorBusy?.()) return;
-    if (!isPanningMap) {
-      if (!downPointer || Math.hypot(e.clientX - downPointer.x, e.clientY - downPointer.y) < 5) return;
-      isPanningMap = true;
-      window.__wasMapDragging = true;
-      svg.classList.add('is-panning');
-      try { svg.setPointerCapture?.(e.pointerId); } catch (_) {}
+    if (panButton === 0) {
+      if (e.pointerType === 'mouse' && (e.buttons & 1) === 0) {
+        stopMapPan();
+        return;
+      }
+      if (mapZoom <= 1 || window.__isEditorBusy?.()) return;
+      if (!isPanningMap) {
+        if (!downPointer || Math.hypot(e.clientX - downPointer.x, e.clientY - downPointer.y) < 5) return;
+        isPanningMap = true;
+        window.__wasMapDragging = true;
+        svg.classList.add('is-panning');
+        try { svg.setPointerCapture?.(e.pointerId); } catch (_) {}
+      }
+      panByScreenDelta(e.clientX - lastPointer.x, e.clientY - lastPointer.y, false);
+      lastPointer = { x: e.clientX, y: e.clientY };
     }
-    panByScreenDelta(e.clientX - lastPointer.x, e.clientY - lastPointer.y, false);
-    lastPointer = { x: e.clientX, y: e.clientY };
   }, { passive: false });
 
-  function endMapPan(e) {
-    if (e.pointerId !== panPointerId) return;
-    if (isPanningMap) {
-      try { svg.releasePointerCapture?.(e.pointerId); } catch (_) {}
-      setTimeout(() => { window.__wasMapDragging = false; }, 80);
+  window.addEventListener('pointerup', e => {
+    if (e.pointerId === panPointerId || e.button === 2 || (panButton === 2 && (e.buttons & 2) === 0)) {
+      stopMapPan();
     }
-    isPanningMap = false;
-    panButton = 0;
-    downPointer = null;
-    lastPointer = null;
-    svg.classList.remove('is-panning');
-    panPointerId = null;
-  }
-  window.addEventListener('pointerup', endMapPan, true);
-  window.addEventListener('pointercancel', endMapPan, true);
+  }, true);
+  window.addEventListener('mouseup', e => {
+    if (e.button === 2 || (panButton === 2 && (e.buttons & 2) === 0)) {
+      stopMapPan();
+    }
+  }, true);
+  window.addEventListener('pointercancel', stopMapPan, true);
+  window.addEventListener('blur', stopMapPan);
 
   zoomInBtn?.addEventListener('click', () => {
     const r = svg.getBoundingClientRect();
@@ -2430,6 +2455,8 @@ document.addEventListener('DOMContentLoaded',()=>{
       pathEl.setAttribute('stroke-linejoin', 'round');
       pathEl.setAttribute('stroke-width', '2.31506');
       pathEl.setAttribute('vector-effect', 'non-scaling-stroke');
+      pathEl.style.pointerEvents = 'stroke';
+      pathEl.style.cursor = 'pointer';
       pathsGroup.appendChild(pathEl);
 
       // Compute directional arrows along each sub-segment oriented toward Assembly Point
@@ -2468,11 +2495,14 @@ document.addEventListener('DOMContentLoaded',()=>{
       const c = document.createElementNS(NS, 'circle');
       c.setAttribute('cx', qp.x);
       c.setAttribute('cy', qp.y);
-      c.setAttribute('r', '4');
+      c.setAttribute('r', '5.5');
       c.setAttribute('fill', '#059669');
       c.setAttribute('stroke', '#ffffff');
-      c.setAttribute('stroke-width', '1.5');
+      c.setAttribute('stroke-width', '1.8');
       c.setAttribute('vector-effect', 'non-scaling-stroke');
+      c.setAttribute('data-qr-origin-id', qp.id);
+      c.style.pointerEvents = 'all';
+      c.style.cursor = 'pointer';
       originsGroup.appendChild(c);
     });
     container.appendChild(originsGroup);
@@ -2556,6 +2586,12 @@ document.addEventListener('DOMContentLoaded',()=>{
     cInner.setAttribute('stroke', '#FFFFFF');
     cInner.setAttribute('stroke-width', '2');
     cInner.setAttribute('vector-effect', 'non-scaling-stroke');
+    cOuter.setAttribute('data-assembly-point', '1');
+    cOuter.style.pointerEvents = 'all';
+    cOuter.style.cursor = 'pointer';
+    cInner.setAttribute('data-assembly-point', '1');
+    cInner.style.pointerEvents = 'all';
+    cInner.style.cursor = 'pointer';
     container.appendChild(cOuter);
     container.appendChild(cInner);
 
@@ -2702,6 +2738,20 @@ document.addEventListener('DOMContentLoaded',()=>{
       badge: `YOU ARE HERE · ${point.code}`,
       codeLabel: `QR ${point.code || point.id}`,
       title: point.name
+    });
+    window.__showEntityDetailInDrawer?.({
+      eyebrow: `TITIK AWAL QR · KODE ${point.code}`,
+      title: `${point.code} · ${point.name}`,
+      chip: 'YOU ARE HERE',
+      chipClass: 'feature-chip bg-sky-50 text-sky-700',
+      copy: `Posisi awal evakuasi <b>${esc(point.id)}</b> pada koordinat (${Math.round(point.x)}, ${Math.round(point.y)}). Ikuti garis rute hijau putus-putus menuju Titik Kumpul (Assembly Point).`,
+      boxes: [
+        ['Status', 'Titik QR Aktif'],
+        ['Kode QR', `${point.id} (${point.code})`],
+        ['Jarak Evakuasi', `~${route.meters} meter`],
+        ['Tujuan', 'Titik Kumpul']
+      ],
+      hideRoomActions: true
     });
     if (pan) {
       requestAnimationFrame(() => {
@@ -6448,17 +6498,13 @@ document.addEventListener('DOMContentLoaded',()=>{
       document.body.appendChild(handle);
     }
 
-    // 3. Header Controls (Theme, Fullscreen, Drawer Toggle)
+    // 3. Header Controls (Fullscreen & Drawer Toggle — Dark Mode removed)
+    document.body.classList.remove('theme-dark');
+    try { localStorage.removeItem('gisK3ThemeMode'); } catch (_) {}
+
     const headerRight = document.querySelector('body > header > div:last-child');
     let sideBtn = document.getElementById('btn-toggle-sidebar');
     if (headerRight && !sideBtn) {
-      const themeBtn = document.createElement('button');
-      themeBtn.id = 'btn-toggle-theme';
-      themeBtn.type = 'button';
-      themeBtn.className = 'smart-header-ctrl';
-      themeBtn.title = 'Ganti Tema Terang / Gelap';
-      themeBtn.innerHTML = '🌙 <span>Gelap</span>';
-
       const fsBtn = document.createElement('button');
       fsBtn.id = 'btn-toggle-fullscreen';
       fsBtn.type = 'button';
@@ -6470,23 +6516,11 @@ document.addEventListener('DOMContentLoaded',()=>{
       sideBtn.id = 'btn-toggle-sidebar';
       sideBtn.type = 'button';
       sideBtn.className = 'smart-header-ctrl';
-      sideBtn.title = 'Buka / Tutup Drawer Legenda & Ruangan di Kanan';
-      sideBtn.innerHTML = '📑 <span>Legenda & Ruang</span>';
+      sideBtn.title = 'Buka / Tutup Panel Legenda & Informasi Detail';
+      sideBtn.innerHTML = '📑 <span>Legenda</span>';
 
       headerRight.insertBefore(sideBtn, headerRight.firstChild);
       headerRight.insertBefore(fsBtn, headerRight.firstChild);
-      headerRight.insertBefore(themeBtn, headerRight.firstChild);
-
-      if (localStorage.getItem('gisK3ThemeMode') === 'dark') {
-        document.body.classList.add('theme-dark');
-        themeBtn.innerHTML = '☀️ <span>Terang</span>';
-      }
-
-      themeBtn.addEventListener('click', () => {
-        const dark = document.body.classList.toggle('theme-dark');
-        localStorage.setItem('gisK3ThemeMode', dark ? 'dark' : 'light');
-        themeBtn.innerHTML = dark ? '☀️ <span>Terang</span>' : '🌙 <span>Gelap</span>';
-      });
 
       fsBtn.addEventListener('click', () => {
         if (!document.fullscreenElement) {
@@ -6835,55 +6869,10 @@ document.addEventListener('DOMContentLoaded',()=>{
 
     svg.addEventListener('pointerleave', () => tooltip.classList.remove('visible'));
 
-    // 6. Interactive Click on APAR / P3K / CCTV / Fire Alarm / Custom Asset in Public Mode
-    svg.addEventListener('click', e => {
-      if (document.body.classList.contains('map-editor-active')) return;
-      const markerCircle = e.target.closest?.('#safety-markers .marker-labels circle');
-      if (!markerCircle) return;
-      e.stopPropagation();
-      const cx = +markerCircle.getAttribute('cx'), cy = +markerCircle.getAttribute('cy');
-      const mKind = markerCircle.getAttribute('data-marker-kind') || '';
-      const fill = (markerCircle.getAttribute('fill') || '').toUpperCase();
-      const kindKey = mKind || (fill.includes('DC2626') ? 'apar' : (fill.includes('16A34A') ? 'p3k' : (fill.includes('2563EB') ? 'cctv' : (fill.includes('F97316') ? 'fire' : 'custom'))));
-      const st = window.__mapEditorSafetyAPI?.getState?.();
-      const list = st?.[kindKey] || [];
-      let idx = 0, bestD = Infinity;
-      list.forEach((p, i) => {
-        const d = Math.hypot(p.x - cx, p.y - cy);
-        if (d < bestD) { bestD = d; idx = i; }
-      });
-      const item = list[idx];
-      const defaultNames = { apar: 'APAR', p3k: 'Kotak P3K', cctv: 'Kamera CCTV', fire: 'Fire Alarm', custom: 'Custom Asset' };
-      const assetName = item?.name || markerCircle.getAttribute('data-custom-name') || defaultNames[kindKey] || 'Aset K3';
-      const assetInit = item?.initial || markerCircle.getAttribute('data-custom-initial') || '';
-      const assetColor = item?.color || markerCircle.getAttribute('fill') || '#0284c7';
-      const assetDesc = item?.desc || markerCircle.getAttribute('data-custom-desc') || `Terpetakan dalam kategori ${defaultNames[kindKey] || kindKey.toUpperCase()} (#${idx + 1}).`;
-      const extra = kindKey === 'cctv' && item ? ` · Arah Sorot ${Math.round((+item.angle || 0 + 360) % 360)}°` : (assetInit ? ` [${assetInit}]` : '');
-      window.showK3Toast?.(`🛡 ${assetName} #${idx + 1}${extra} — ${assetDesc} (${Math.round(cx)}, ${Math.round(cy)})`);
-
-      if (isMobileViewport() && mobileRoomSheet) {
-        mobileRoomSheet.innerHTML = `
-          <div class="mrs-top">
-            <div class="mrs-title-wrap">
-              <span class="mrs-badge" style="background:${esc(assetColor)};color:#fff">${esc(assetInit || '#')}</span>
-              <div>
-                <div class="mrs-title">${esc(assetName)} <span style="font-size:9px;color:#64748b">#${idx + 1}</span></div>
-                <div class="mrs-meta">${esc(assetDesc)} · Koordinat (${Math.round(cx)}, ${Math.round(cy)})</div>
-              </div>
-            </div>
-            <button type="button" class="mrs-close" aria-label="Tutup">✕</button>
-          </div>
-        `;
-        mobileRoomSheet.classList.add('open');
-        mobileRoomSheet.querySelector('.mrs-close')?.addEventListener('click', () => {
-          mobileRoomSheet.classList.remove('open');
-        });
-      }
-    });
-
-    // 7. Enhance Detail Ruang Card with Live Spatial K3 Proximity Analytics & Auto-open Drawer when Room Clicked
+    // 6. Universal Auto-Open Legend/Detail Drawer Helper (Opens Legend & shows info for ANYTHING pressed!)
     const detailCard = document.getElementById('room-detail-card');
     const detailGrid = detailCard?.querySelector('.detail-grid');
+    const detailEyebrow = detailCard?.querySelector('.text-cyan-700');
     if (detailCard && detailGrid && !document.getElementById('smart-k3-proximity')) {
       const proxBox = document.createElement('div');
       proxBox.id = 'smart-k3-proximity';
@@ -6891,76 +6880,380 @@ document.addEventListener('DOMContentLoaded',()=>{
       detailGrid.insertAdjacentElement('afterend', proxBox);
     }
 
+    function findNearestRoomToPoint(x, y) {
+      let bestRoom = null, bestDist = Infinity;
+      document.querySelectorAll('#room-hotspots [data-room], #v6-map-area-layer [data-room]').forEach(el => {
+        if (el.style.display === 'none') return;
+        try {
+          const b = el.getBBox();
+          const cx = b.x + b.width / 2, cy = b.y + b.height / 2;
+          const d = Math.hypot(cx - x, cy - y);
+          if (d < bestDist) {
+            bestDist = d;
+            bestRoom = el.dataset.room;
+          }
+        } catch (_) {}
+      });
+      return bestRoom ? { room: bestRoom, name: window.getRoomName ? window.getRoomName(bestRoom) : `Ruangan ${bestRoom}`, distMeters: Math.max(1, Math.round(bestDist / 18)) } : null;
+    }
+
+    function showEntityDetailInDrawer(opts) {
+      if (!opts || document.body.classList.contains('map-editor-active')) return;
+      const dTitle = document.getElementById('detail-room-title');
+      const dChip = document.getElementById('detail-room-chip');
+      const dCopy = document.getElementById('detail-room-copy');
+      const dBoxes = detailGrid ? [...detailGrid.querySelectorAll('.detail-box')] : [];
+      const proxBox = document.getElementById('smart-k3-proximity');
+      const k3Log = document.getElementById('detail-room-k3-log');
+      const rActions = document.getElementById('detail-room-actions');
+
+      if (detailEyebrow) detailEyebrow.textContent = opts.eyebrow || 'INFORMASI ITEM TERPILIH';
+      if (dTitle) dTitle.textContent = opts.title || 'Informasi Peta';
+      if (dChip) {
+        dChip.textContent = opts.chip || 'AKTIF';
+        dChip.className = opts.chipClass || 'feature-chip bg-sky-50 text-sky-700';
+      }
+      if (dCopy) dCopy.innerHTML = opts.copy || '';
+
+      if (Array.isArray(opts.boxes)) {
+        opts.boxes.forEach((pair, idx) => {
+          const box = dBoxes[idx];
+          if (!box || !pair) return;
+          const kEl = box.querySelector('.k');
+          const vEl = box.querySelector('.v');
+          if (kEl) kEl.textContent = pair[0];
+          if (vEl) vEl.textContent = pair[1];
+        });
+      }
+
+      if (proxBox) {
+        if (opts.extraHtml) {
+          proxBox.classList.remove('hidden');
+          proxBox.innerHTML = opts.extraHtml;
+        } else {
+          proxBox.classList.add('hidden');
+        }
+      }
+      if (k3Log && opts.hideK3Log !== false) k3Log.classList.add('hidden');
+      if (rActions && opts.hideRoomActions) rActions.classList.add('hidden');
+
+      mobileRoomSheet?.classList.remove('open');
+      setDrawerOpen(true);
+      document.querySelector('.panel-tab[data-panel-tab="detail"]')?.click();
+      aside.querySelector('.side-content')?.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+    window.__showEntityDetailInDrawer = showEntityDetailInDrawer;
+
+    // Auto-open Legend Drawer & show full info when clicking ANY Safety Marker, QR Origin, Assembly Point, Route, Zone, or Triplek Wall on Map
+    svg.addEventListener('click', e => {
+      if (document.body.classList.contains('map-editor-active') || window.__wasMapDragging) return;
+
+      // 6a. Safety Marker (APAR, P3K, CCTV, Fire Alarm, Custom Asset)
+      const markerCircle = e.target.closest?.('#safety-markers .marker-labels circle, #safety-markers .marker-pulse circle');
+      if (markerCircle) {
+        e.stopPropagation();
+        const cx = +markerCircle.getAttribute('cx'), cy = +markerCircle.getAttribute('cy');
+        const mKind = markerCircle.getAttribute('data-marker-kind') || '';
+        const strokeOrFill = ((markerCircle.getAttribute('fill') || '') + ' ' + (markerCircle.getAttribute('stroke') || '')).toUpperCase();
+        const kindKey = mKind
+          || (markerCircle.closest('.marker-apar') || strokeOrFill.includes('DC2626') ? 'apar'
+          : (markerCircle.closest('.marker-p3k') || strokeOrFill.includes('16A34A') ? 'p3k'
+          : (markerCircle.closest('.marker-cctv') || strokeOrFill.includes('2563EB') ? 'cctv'
+          : (markerCircle.closest('.marker-fire-alarm') || strokeOrFill.includes('F97316') ? 'fire' : 'custom'))));
+        const st = window.__mapEditorSafetyAPI?.getState?.();
+        const list = st?.[kindKey] || [];
+        let idx = 0, bestD = Infinity;
+        list.forEach((p, i) => {
+          const d = Math.hypot(p.x - cx, p.y - cy);
+          if (d < bestD) { bestD = d; idx = i; }
+        });
+        const item = list[idx];
+        const defaultNames = { apar: 'APAR (Pemadam Api Ringan)', p3k: 'Kotak P3K', cctv: 'Kamera CCTV', fire: 'Fire Alarm', custom: 'Custom Asset' };
+        const catBadges = { apar: 'APAR', p3k: 'P3K', cctv: 'CCTV', fire: 'ALARM', custom: 'CUSTOM' };
+        const assetName = item?.name || markerCircle.getAttribute('data-custom-name') || defaultNames[kindKey] || 'Aset K3';
+        const assetInit = item?.initial || markerCircle.getAttribute('data-custom-initial') || catBadges[kindKey]?.[0] || 'A';
+        const assetDesc = item?.desc || markerCircle.getAttribute('data-custom-desc') || `Fasilitas keselamatan kategori ${defaultNames[kindKey] || kindKey.toUpperCase()} titik ke-${idx + 1} pada denah ULP Panakkukang.`;
+        const nearRoom = findNearestRoomToPoint(cx, cy);
+        const cctvAngle = kindKey === 'cctv' && item ? `${Math.round(((+item.angle || 0) % 360 + 360) % 360)}° (Jarak ${Math.round(+item.range || 47)}px)` : `Kode [${assetInit}]`;
+
+        showEntityDetailInDrawer({
+          eyebrow: `DETAIL FASILITAS K3 · ${catBadges[kindKey] || 'ASET'}`,
+          title: `${assetName} #${idx + 1}`,
+          chip: `${catBadges[kindKey] || 'K3'} · ${assetInit}`,
+          chipClass: 'feature-chip bg-rose-50 text-rose-700',
+          copy: `${esc(assetDesc)}`,
+          boxes: [
+            ['Status', 'Aktif & Terpetakan'],
+            ['Kategori', `${catBadges[kindKey]} (#${idx + 1} dari ${list.length})`],
+            ['Koordinat Peta', `(${Math.round(cx)}, ${Math.round(cy)})`],
+            [kindKey === 'cctv' ? 'Arah Sorot CCTV' : 'Kode / Simbol', cctvAngle]
+          ],
+          extraHtml: `
+            <div style="font-size:8px;font-weight:900;text-transform:uppercase;letter-spacing:.08em;color:#0284c7;margin-bottom:4px">📍 Konteks Lokasi Fasilitas</div>
+            ${nearRoom ? `<div class="prox-row"><span>🏠 Ruangan Terdekat</span><b>Ruang ${esc(nearRoom.room)} · ${esc(nearRoom.name)} (~${nearRoom.distMeters} m)</b></div>` : ''}
+            <div class="prox-row"><span>🔢 Urutan dalam Kategori</span><b>Titik #${idx + 1} dari total ${list.length} ${catBadges[kindKey]}</b></div>
+          `,
+          hideRoomActions: true
+        });
+        return;
+      }
+
+      // 6b. QR Start Origin Dot or You Are Here Marker on Map
+      const qrOriginEl = e.target.closest?.('[data-qr-origin-id], #you-here-active');
+      if (qrOriginEl) {
+        e.stopPropagation();
+        const qrId = qrOriginEl.getAttribute('data-qr-origin-id') || (window.START_POINTS?.[0]?.id || 'START-01');
+        window.__v6ShowStart?.(qrId);
+        return;
+      }
+
+      // 6c. Assembly Point (Titik Kumpul) on Map
+      const apEl = e.target.closest?.('[data-assembly-point], .evac-assembly-pulse');
+      if (apEl) {
+        e.stopPropagation();
+        const ap = window.__getAssemblyPoint ? window.__getAssemblyPoint() : { x: 535.5, y: 898.3 };
+        const activeSegs = (window.EvacBackend?.getSegments?.() || []).filter(s => s.active !== false).length;
+        showEntityDetailInDrawer({
+          eyebrow: 'TITIK KUMPUL DARURAT · ISO 7010 E007',
+          title: 'Titik Kumpul Evakuasi (Assembly Point)',
+          chip: 'ZONA AMAN UTAMA',
+          chipClass: 'feature-chip bg-emerald-50 text-emerald-700',
+          copy: 'Titik berkumpul akhir seluruh pegawai dan pengunjung PT PLN (Persero) ULP Panakkukang saat terjadi keadaan darurat. Area terbuka bebas reruntuhan.',
+          boxes: [
+            ['Status', 'Aktif & Terbuka'],
+            ['Kapasitas Area', '~150 Orang'],
+            ['Koordinat Peta', `(${Math.round(ap.x)}, ${Math.round(ap.y)})`],
+            ['Koridor Terhubung', `${activeSegs} Segmen Aktif`]
+          ],
+          hideRoomActions: true
+        });
+        return;
+      }
+
+      // 6d. Evacuation Route Line (.evac-route) on Map
+      const routeEl = e.target.closest?.('#evacuation-routes .evac-route[data-seg-id]');
+      if (routeEl) {
+        e.stopPropagation();
+        const segId = routeEl.getAttribute('data-seg-id');
+        const seg = (window.EvacBackend?.getSegments?.() || []).find(s => s.id === segId);
+        if (seg) {
+          showEntityDetailInDrawer({
+            eyebrow: 'SEGMEN JALUR EVAKUASI TERPADU',
+            title: `${seg.id} · ${seg.name}`,
+            chip: seg.kind === 'custom' ? 'JALUR CUSTOM' : 'KORIDOR BAWAAN',
+            chipClass: 'feature-chip bg-emerald-50 text-emerald-700',
+            copy: 'Segmen koridor aktif dalam graf Dijkstra yang menghubungkan ruangan dan titik awal QR menuju Titik Kumpul (Assembly Point).',
+            boxes: [
+              ['Status Koridor', seg.active !== false ? 'Aktif (Terbuka)' : 'Nonaktif'],
+              ['Tipe Jalur', seg.kind === 'custom' ? 'Jalur Tambahan Admin' : 'Koridor Standar'],
+              ['Jumlah Titik Sudut', `${seg.points?.length || 0} Titik`],
+              ['Tujuan Akhir', 'Assembly Point']
+            ],
+            hideRoomActions: true
+          });
+          return;
+        }
+      }
+
+      // 6e. Custom Zone (.v6-map-area without data-room)
+      const zoneEl = e.target.closest?.('#v6-map-area-layer .v6-map-area:not([data-room])');
+      if (zoneEl) {
+        e.stopPropagation();
+        const zoneLabel = zoneEl.querySelector('.v6-map-area-label')?.textContent || 'Zona Khusus';
+        showEntityDetailInDrawer({
+          eyebrow: 'ZONA KUSTOM TERPETAKAN',
+          title: zoneLabel,
+          chip: 'ZONA KHUSUS',
+          chipClass: 'feature-chip bg-purple-50 text-purple-700',
+          copy: `Area zona kustom <b>${esc(zoneLabel)}</b> yang ditandai pada denah operasional ULP Panakkukang.`,
+          boxes: [
+            ['Status', 'Terpetakan'],
+            ['Kategori', 'Zona Khusus'],
+            ['Visibilitas', 'Publik & Admin'],
+            ['Mode', 'Interaktif']
+          ],
+          hideRoomActions: true
+        });
+        return;
+      }
+
+      // 6f. Temporary Partition Wall ([data-triplek-wall="true"])
+      const wallEl = e.target.closest?.('[data-triplek-wall="true"]');
+      if (wallEl) {
+        e.stopPropagation();
+        showEntityDetailInDrawer({
+          eyebrow: 'STRUKTUR PARTISI · TEMBOK SEMENTARA',
+          title: 'Partisi Tembok Triplek / Non-Permanen',
+          chip: 'TEMBOK SEMENTARA',
+          chipClass: 'feature-chip bg-amber-50 text-amber-700',
+          copy: 'Segmen dinding partisi sementara (triplek/gypsum). Dalam keadaan darurat atau renovasi, partisi ini memiliki karakteristik berbeda dari dinding beton permanen.',
+          boxes: [
+            ['Status', 'Terpetakan'],
+            ['Material', 'Partisi Triplek'],
+            ['Total Segmen', '35 Segmen Partisi'],
+            ['Fungsi', 'Pembatas Ruangan']
+          ],
+          hideRoomActions: true
+        });
+        return;
+      }
+    });
+
+    // 7. Enhance Detail Ruang Card with Live Spatial K3 Proximity Analytics & Auto-open Drawer on BOTH Desktop & Mobile!
     const origSelectRoom = window.__selectRoom;
     if (typeof origSelectRoom === 'function') {
       window.__selectRoom = function(roomNumber, source) {
+        if (detailEyebrow) detailEyebrow.textContent = 'DETAIL RUANG';
+        ['Status', 'Kategori', 'APAR', 'Evakuasi'].forEach((lbl, idx) => {
+          const kEl = detailGrid?.querySelectorAll('.detail-box .k')?.[idx];
+          if (kEl) kEl.textContent = lbl;
+        });
         origSelectRoom(roomNumber, source);
         const proxBox = document.getElementById('smart-k3-proximity');
-        if (!proxBox) return;
         const box = getRoomBox(roomNumber);
-        if (!box) { proxBox.classList.add('hidden'); return; }
-        const nearApar = getNearestAsset(box.cx, box.cy, 'apar');
-        const nearP3k = getNearestAsset(box.cx, box.cy, 'p3k');
-        const nearCctv = getNearestAsset(box.cx, box.cy, 'cctv');
-        const ap = window.__getAssemblyPoint ? window.__getAssemblyPoint() : { x: 535.5, y: 898.3 };
-        const distAp = Math.max(2, Math.round(Math.hypot(box.cx - ap.x, box.cy - ap.y) / 18));
+        if (proxBox && box) {
+          const nearApar = getNearestAsset(box.cx, box.cy, 'apar');
+          const nearP3k = getNearestAsset(box.cx, box.cy, 'p3k');
+          const nearCctv = getNearestAsset(box.cx, box.cy, 'cctv');
+          const ap = window.__getAssemblyPoint ? window.__getAssemblyPoint() : { x: 535.5, y: 898.3 };
+          const distAp = Math.max(2, Math.round(Math.hypot(box.cx - ap.x, box.cy - ap.y) / 18));
 
-        proxBox.classList.remove('hidden');
-        proxBox.innerHTML = `
-          <div style="font-size:8px;font-weight:900;text-transform:uppercase;letter-spacing:.08em;color:#0284c7;margin-bottom:4px">📡 Analisis Jarak Fasilitas K3 Terdekat</div>
-          ${nearApar ? `<div class="prox-row"><span>🔴 APAR Terdekat</span><b>APAR #${nearApar.idx} (~${Math.max(1, Math.round(nearApar.dist / 18))} m)</b></div>` : ''}
-          ${nearP3k ? `<div class="prox-row"><span>🟢 Kotak P3K Terdekat</span><b>P3K #${nearP3k.idx} (~${Math.max(1, Math.round(nearP3k.dist / 18))} m)</b></div>` : ''}
-          ${nearCctv ? `<div class="prox-row"><span>🔵 CCTV Pengawas</span><b>CCTV #${nearCctv.idx} (Sorot ${Math.round((+nearCctv.angle || 0 + 360) % 360)}°)</b></div>` : ''}
-          <div class="prox-row"><span>🏃 Jarak ke Titik Kumpul</span><b>~${distAp} meter</b></div>
-        `;
+          proxBox.classList.remove('hidden');
+          proxBox.innerHTML = `
+            <div style="font-size:8px;font-weight:900;text-transform:uppercase;letter-spacing:.08em;color:#0284c7;margin-bottom:4px">📡 Analisis Jarak Fasilitas K3 Terdekat</div>
+            ${nearApar ? `<div class="prox-row"><span>🔴 APAR Terdekat</span><b>APAR #${nearApar.idx} (~${Math.max(1, Math.round(nearApar.dist / 18))} m)</b></div>` : ''}
+            ${nearP3k ? `<div class="prox-row"><span>🟢 Kotak P3K Terdekat</span><b>P3K #${nearP3k.idx} (~${Math.max(1, Math.round(nearP3k.dist / 18))} m)</b></div>` : ''}
+            ${nearCctv ? `<div class="prox-row"><span>🔵 CCTV Pengawas</span><b>CCTV #${nearCctv.idx} (Sorot ${Math.round((+nearCctv.angle || 0 + 360) % 360)}°)</b></div>` : ''}
+            <div class="prox-row"><span>🏃 Jarak ke Titik Kumpul</span><b>~${distAp} meter</b></div>
+          `;
+        }
 
-        if (isMobileViewport() && !document.body.classList.contains('map-editor-active')) {
-          if (source === 'sidebar') {
-            setDrawerOpen(false);
-          }
-          if (mobileRoomSheet) {
-            const rName = window.getRoomName ? window.getRoomName(roomNumber) : `Ruangan ${roomNumber}`;
-            const cat = getCat(roomNumber);
-            mobileRoomSheet.innerHTML = `
-              <div class="mrs-top">
-                <div class="mrs-title-wrap">
-                  <span class="mrs-badge">${esc(roomNumber)}</span>
-                  <div>
-                    <div class="mrs-title">${esc(rName)}</div>
-                    <div class="mrs-meta">${esc(cat)} ${nearApar ? `· 🔴 APAR #${nearApar.idx} (~${Math.max(1, Math.round(nearApar.dist / 18))}m)` : ''} · 🏃 Titik Kumpul ~${distAp}m</div>
-                  </div>
-                </div>
-                <button type="button" class="mrs-close" aria-label="Tutup">✕</button>
-              </div>
-              <div class="mrs-actions">
-                <button type="button" class="mrs-btn primary" id="mrs-btn-evac">🏃 Rute Evakuasi</button>
-                <button type="button" class="mrs-btn secondary" id="mrs-btn-detail">📑 Detail Lengkap</button>
-              </div>
-            `;
-            mobileRoomSheet.classList.add('open');
-            mobileRoomSheet.querySelector('.mrs-close')?.addEventListener('click', () => {
-              mobileRoomSheet.classList.remove('open');
-            });
-            mobileRoomSheet.querySelector('#mrs-btn-evac')?.addEventListener('click', () => {
-              if (typeof window.__releaseSetRoomRoute === 'function') {
-                window.__releaseSetRoomRoute(roomNumber);
-              } else {
-                document.getElementById('btn-detail-evac-route')?.click();
-              }
-              mobileEvacFab?.classList.add('active');
-            });
-            mobileRoomSheet.querySelector('#mrs-btn-detail')?.addEventListener('click', () => {
-              mobileRoomSheet.classList.remove('open');
-              setDrawerOpen(true);
-              document.querySelector('.panel-tab[data-panel-tab="detail"]')?.click();
-            });
-          }
-        } else if (source === 'map' && !document.body.classList.contains('map-editor-active')) {
+        // Always auto-open the Legend/Detail Drawer on BOTH Desktop and Mobile when any room is selected!
+        if (!document.body.classList.contains('map-editor-active')) {
+          mobileRoomSheet?.classList.remove('open');
           setDrawerOpen(true);
           document.querySelector('.panel-tab[data-panel-tab="detail"]')?.click();
+          aside.querySelector('.side-content')?.scrollTo({ top: 0, behavior: 'smooth' });
         }
       };
     }
+
+    // Also auto-open the Legend/Detail Drawer with category details when clicking any K3 Category Pill or Layer Button!
+    const origFocusSafetyKind = window.__focusSafetyKind;
+    window.__focusSafetyKind = function(kind) {
+      origFocusSafetyKind?.(kind);
+      if (document.body.classList.contains('map-editor-active')) return;
+      const st = window.__mapEditorSafetyAPI?.getState?.();
+      const list = st?.[kind] || [];
+      const metaMap = {
+        apar:   { title: 'Alat Pemadam Api Ringan (APAR)', badge: 'APAR', desc: 'Daftar seluruh titik tabung APAR yang tersebar di koridor dan ruangan prioritas K3.' },
+        p3k:    { title: 'Kotak Pertolongan Pertama (P3K)', badge: 'P3K', desc: 'Lokasi kotak medis P3K untuk penanganan darurat cedera ringan di area kerja.' },
+        cctv:   { title: 'Kamera Pengawas Keamanan (CCTV)', badge: 'CCTV', desc: 'Titik kamera pemantau keamanan beserta arah sudut sorot (Field of View) pada denah.' },
+        fire:   { title: 'Titik Pemicu & Sirene Fire Alarm', badge: 'FIRE ALARM', desc: 'Lokasi titik pemicu alarm kebakaran dan indikator peringatan darurat.' },
+        custom: { title: 'Fasilitas Keselamatan Kustom', badge: 'CUSTOM ASSET', desc: 'Daftar fasilitas keselamatan tambahan yang dipetakan pada denah.' }
+      };
+      const m = metaMap[kind] || metaMap.custom;
+      const listHtml = list.length
+        ? `<div style="font-size:8px;font-weight:900;text-transform:uppercase;letter-spacing:.08em;color:#0284c7;margin-bottom:5px">📋 Daftar Titik ${esc(m.badge)} (${list.length} Titik — Klik untuk Fokus)</div>`
+          + `<div style="max-height:140px;overflow-y:auto;display:flex;flex-direction:column;gap:4px">`
+          + list.map((p, i) => {
+              const nr = findNearestRoomToPoint(p.x, p.y);
+              return `<button type="button" data-zoom-marker-kind="${esc(kind)}" data-zoom-marker-idx="${i}" style="text-align:left;padding:5px 7px;border-radius:7px;background:#fff;border:1px solid #cbd5e1;font-size:8.5px;display:flex;justify-content:space-between;align-items:center;cursor:pointer"><span><b>${esc(p.name || m.badge)} #${i + 1}</b> ${nr ? `<span style="color:#64748b">· Dekat R.${esc(nr.room)}</span>` : ''}</span><span style="color:#0284c7;font-weight:800">(${Math.round(p.x)}, ${Math.round(p.y)}) ›</span></button>`;
+            }).join('')
+          + `</div>`
+        : '';
+
+      showEntityDetailInDrawer({
+        eyebrow: `FILTER KATEGORI K3 · ${m.badge}`,
+        title: `${m.title} (${list.length} Titik)`,
+        chip: `${list.length} TITIK AKTIF`,
+        chipClass: 'feature-chip bg-sky-50 text-sky-700',
+        copy: m.desc,
+        boxes: [
+          ['Status Layer', 'Ditampilkan di Peta'],
+          ['Kategori', m.badge],
+          ['Jumlah Titik', `${list.length} Lokasi`],
+          ['Interaksi', 'Klik titik di peta / daftar']
+        ],
+        extraHtml: listHtml,
+        hideRoomActions: true
+      });
+
+      document.querySelectorAll('[data-zoom-marker-idx]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const idx = +btn.dataset.zoomMarkerIdx;
+          const pt = list[idx];
+          if (pt) {
+            window.__panZoomToSvgPoint?.(pt.x, pt.y, isMobileViewport() ? 2.1 : 1.65);
+          }
+        });
+      });
+    };
+
+    // Auto-open Legend Drawer with layer summary when user clicks toolbar buttons (Jalur Evakuasi, APAR & K3 Safety, Mode Tembok Sementara)
+    document.querySelectorAll('.gis-layer-btn[data-layer="evacuation"], #mobile-evac-fab').forEach(btn => {
+      btn.addEventListener('click', () => {
+        if (document.body.classList.contains('map-editor-active') || window.__isActivatingEvacForQr) return;
+        const isEvac = document.getElementById('evacuation-routes')?.classList.contains('is-active');
+        if (!isEvac) return;
+        const segs = (window.EvacBackend?.getSegments?.() || []).filter(s => s.active !== false);
+        const qrCount = (window.EvacBackend?.getQrStarts?.() || []).length;
+        showEntityDetailInDrawer({
+          eyebrow: 'LAYER AKTIF · JARINGAN EVAKUASI',
+          title: 'Jalur Evakuasi & Titik Kumpul',
+          chip: `${segs.length} KORIDOR AKTIF`,
+          chipClass: 'feature-chip bg-emerald-50 text-emerald-700',
+          copy: 'Menampilkan seluruh jaringan koridor evakuasi menuju Titik Kumpul (Assembly Point). Klik ruangan mana saja atau titik QR di peta untuk menghitung rute terpendek.',
+          boxes: [
+            ['Status Jaringan', 'Aktif & Terhubung'],
+            ['Segmen Koridor', `${segs.length} Jalur Aktif`],
+            ['Titik Awal QR', `${qrCount} Titik Koridor`],
+            ['Tujuan Akhir', 'Assembly Point']
+          ],
+          hideRoomActions: true
+        });
+      });
+    });
+
+    document.querySelector('.gis-layer-btn[data-layer="safety"]')?.addEventListener('click', () => {
+      if (document.body.classList.contains('map-editor-active') || window.__isFocusingSafetyKind) return;
+      const counts = window.__getSafetyAssetCounts ? window.__getSafetyAssetCounts() : { apar: 12, p3k: 3, cctv: 16, fire: 5, custom: 0 };
+      const total = (counts.apar || 0) + (counts.p3k || 0) + (counts.cctv || 0) + (counts.fire || 0) + (counts.custom || 0);
+      showEntityDetailInDrawer({
+        eyebrow: 'LAYER AKTIF · FASILITAS K3 & KEAMANAN',
+        title: `APAR, P3K, CCTV & Fire Alarm (${total} Titik)`,
+        chip: 'LAYER SAFETY AKTIF',
+        chipClass: 'feature-chip bg-rose-50 text-rose-700',
+        copy: 'Menampilkan seluruh titik peralatan keselamatan kerja (K3) dan cakupan sorot CCTV. Klik ikon bulat (A/P/C/F) pada peta untuk melihat detail tiap alat.',
+        boxes: [
+          ['APAR & P3K', `${counts.apar} APAR · ${counts.p3k} P3K`],
+          ['Kamera CCTV', `${counts.cctv} Kamera Aktif`],
+          ['Fire Alarm', `${counts.fire} Titik Alarm`],
+          ['Aset Kustom', `${counts.custom || 0} Titik`]
+        ],
+        hideRoomActions: true
+      });
+    });
+
+    document.getElementById('btn-temporary-wall')?.addEventListener('click', () => {
+      if (document.body.classList.contains('map-editor-active')) return;
+      const active = document.getElementById('btn-temporary-wall')?.classList.contains('wall-active');
+      if (!active) return;
+      showEntityDetailInDrawer({
+        eyebrow: 'MODE PARTISI · TEMBOK SEMENTARA',
+        title: 'Sorotan Tembok Triplek / Partisi Sementara',
+        chip: '35 SEGMEN DISOROT',
+        chipClass: 'feature-chip bg-amber-50 text-amber-700',
+        copy: 'Menyorot seluruh dinding partisi non-permanen (triplek) dengan warna kuning menyala pada denah untuk membantu identifikasi struktur bangunan.',
+        boxes: [
+          ['Status Mode', 'Sorotan Aktif'],
+          ['Material', 'Partisi Triplek'],
+          ['Jumlah Segmen', '35 Titik Partisi'],
+          ['Dampak Evakuasi', 'Dihitung di Graf']
+        ],
+        hideRoomActions: true
+      });
+    });
 
     // 8. Color-code Room Badges in Drawer + Add Category Filter Chips & Hover-Preview
     const roomList = document.getElementById('sidebar-room-list');
@@ -7019,6 +7312,18 @@ document.addEventListener('DOMContentLoaded',()=>{
       setDrawerOpen(true);
       document.querySelector('.panel-tab[data-panel-tab="rooms"]')?.click();
     });
+
+    // If page was opened with ?start= or ?room= (e.g. scanning QR on Mobile/Desktop), automatically open Legend/Detail Drawer!
+    setTimeout(() => {
+      const params = new URLSearchParams(window.location.search);
+      const startP = params.get('start');
+      const roomP = params.get('room');
+      if (startP) {
+        window.__v6ShowStart?.(startP);
+      } else if (roomP) {
+        window.__selectRoom?.(roomP, 'map');
+      }
+    }, 160);
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initSmartUI);

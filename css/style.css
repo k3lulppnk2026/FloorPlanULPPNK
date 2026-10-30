@@ -2513,21 +2513,7 @@ body[data-v36-area-mode="area"] #main-svg {
   --ui-accent: #4f46e5;
   --drawer-width: 390px;
 }
-body.theme-dark {
-  --ui-bg: #0b1120;
-  --ui-surface: #111827;
-  --ui-surface-glass: rgba(17, 24, 39, 0.95);
-  --ui-subsurface: #1e293b;
-  --ui-border: #334155;
-  --ui-text: #f8fafc;
-  --ui-text-muted: #cbd5e1;
-  --ui-text-soft: #94a3b8;
-  --ui-primary: #38bdf8;
-  --ui-primary-soft: rgba(56, 189, 248, 0.16);
-  --ui-accent: #818cf8;
-  background: #0b1120 !important;
-  color: #f8fafc !important;
-}
+/* Dark mode removed per user request */
 /* 1. CLEAN INITIAL MAP: Hide extra room text labels on map so only floorplan & room numbers appear */
 body:not(.show-map-room-names) #updated-room-map-labels [data-role="line1"],
 body:not(.show-map-room-names) #updated-room-map-labels [data-role="line2"],
@@ -2845,6 +2831,11 @@ body.theme-dark #map-wrapper {
   filter: drop-shadow(0 0 6px rgba(14, 165, 233, 0.7));
 }
 /* 5. RIGHT SLIDE-OVER DRAWER (SIDEBAR LEGENDA & RUANGAN) */
+@media (min-width: 901px) {
+  body:not(.sidebar-collapsed) #map-wrapper {
+    padding-right: calc(var(--drawer-width) + 18px) !important;
+  }
+}
 body > div.flex.flex-1 > aside {
   position: fixed !important;
   top: 62px !important;
@@ -2856,7 +2847,7 @@ body > div.flex.flex-1 > aside {
   border-left: 2px solid #bae6fd !important;
   box-shadow: -18px 0 45px rgba(15, 23, 42, 0.18) !important;
   transform: translateX(0);
-  transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1) !important;
+  transition: transform 0.26s cubic-bezier(0.22, 1, 0.36, 1) !important;
   margin-right: 0 !important;
 }
 body.sidebar-collapsed > div.flex.flex-1 > aside {
@@ -3390,9 +3381,8 @@ body.v6-admin > header .v6-admin-entry {
     overflow: hidden !important;
   }
 
-  /* 1. Separate Mobile View from PC: Hide PC drawer tab, PC sidebar header button & hover tooltip */
+  /* 1. Separate Mobile View from PC: Keep #btn-toggle-sidebar visible on mobile header for quick access */
   #right-drawer-handle,
-  #btn-toggle-sidebar,
   #btn-toggle-fullscreen,
   #smart-map-tooltip,
   #professional-map-hud {
@@ -3541,18 +3531,18 @@ body.v6-admin > header .v6-admin-entry {
     z-index: 30;
   }
 
-  /* 6. Mobile Floating Action Button (FAB) Stack in Bottom-Right */
+  /* 6. Mobile Floating Action Button (FAB) Stack in Bottom-Right (Lifted +66px above Netlify Badge!) */
   #mobile-fab-stack {
     position: fixed;
     right: max(12px, env(safe-area-inset-right));
-    bottom: max(16px, env(safe-area-inset-bottom));
+    bottom: calc(max(16px, env(safe-area-inset-bottom)) + 64px);
     z-index: 82;
     display: flex;
     flex-direction: column;
     align-items: flex-end;
-    gap: 8px;
+    gap: 7px;
     pointer-events: none;
-    transition: bottom 0.22s ease;
+    transition: bottom 0.24s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.2s ease;
   }
   #mobile-fab-stack > button {
     pointer-events: auto;
@@ -3567,42 +3557,37 @@ body.v6-admin > header .v6-admin-entry {
   .mobile-fab-main {
     display: inline-flex;
     align-items: center;
-    gap: 8px;
-    padding: 12px 16px;
+    gap: 7px;
+    padding: 10px 15px;
     border-radius: 999px;
     background: linear-gradient(135deg, #0284c7 0%, #2563eb 55%, #4f46e5 100%);
     color: #ffffff;
-    font-size: 11.5px;
+    font-size: 11px;
     font-weight: 900;
     letter-spacing: 0.02em;
-    box-shadow: 0 12px 28px rgba(37, 99, 235, 0.38), 0 0 0 2px rgba(255, 255, 255, 0.85);
+    box-shadow: 0 10px 24px rgba(37, 99, 235, 0.38), 0 0 0 2px rgba(255, 255, 255, 0.9);
   }
   .mobile-fab-main.active {
     background: linear-gradient(135deg, #ef4444, #dc2626);
     box-shadow: 0 10px 24px rgba(220, 38, 38, 0.38), 0 0 0 2px rgba(255, 255, 255, 0.9);
   }
   .mobile-fab-main .fab-icon {
-    font-size: 14px;
+    font-size: 13px;
     line-height: 1;
   }
   .mobile-fab-mini {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
-    padding: 8px 12px;
+    gap: 5px;
+    padding: 7px 11px;
     border-radius: 999px;
     background: rgba(255, 255, 255, 0.96);
     color: #0f172a;
-    font-size: 10px;
+    font-size: 9.5px;
     font-weight: 800;
     border: 1px solid #cbd5e1 !important;
-    box-shadow: 0 8px 20px rgba(15, 23, 42, 0.14);
+    box-shadow: 0 6px 16px rgba(15, 23, 42, 0.14);
     backdrop-filter: blur(8px);
-  }
-  body.theme-dark .mobile-fab-mini {
-    background: rgba(15, 23, 42, 0.92);
-    color: #f8fafc;
-    border-color: #334155 !important;
   }
   .mobile-fab-mini.active {
     background: linear-gradient(135deg, #059669, #10b981) !important;
@@ -3610,36 +3595,47 @@ body.v6-admin > header .v6-admin-entry {
     border-color: #34d399 !important;
   }
   .mobile-fab-mini b {
-    font-size: 12px;
+    font-size: 11.5px;
     line-height: 1;
   }
 
-  /* 7. Mobile Slide-Over Legend & Rooms Drawer + Backdrop */
+  /* 7. Mobile Non-Blocking Bottom Sheet Drawer (Map stays visible in top half while Legend/Detail is open!) */
   #mobile-drawer-backdrop {
-    position: fixed;
-    inset: 0;
-    background: rgba(15, 23, 42, 0.48);
-    backdrop-filter: blur(2px);
-    z-index: 84;
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity 0.25s ease;
-    display: block;
-  }
-  #mobile-drawer-backdrop.open {
-    opacity: 1;
-    pointer-events: auto;
+    display: none !important;
   }
   body > div.flex.flex-1 > aside {
-    top: 0 !important;
+    top: auto !important;
+    left: 0 !important;
     right: 0 !important;
     bottom: 0 !important;
-    width: min(390px, 88vw) !important;
-    z-index: 85 !important;
+    width: 100vw !important;
+    max-width: 100vw !important;
+    height: 46dvh !important;
+    max-height: 46dvh !important;
+    z-index: 88 !important;
     border-left: 0 !important;
-    border-radius: 20px 0 0 20px !important;
+    border-top: 2px solid #7dd3fc !important;
+    border-radius: 20px 20px 0 0 !important;
     overflow: hidden !important;
-    box-shadow: -20px 0 50px rgba(15, 23, 42, 0.32) !important;
+    box-shadow: 0 -14px 38px rgba(15, 23, 42, 0.22) !important;
+    transform: translateY(0) !important;
+    transition: transform 0.26s cubic-bezier(0.22, 1, 0.36, 1) !important;
+  }
+  body.sidebar-collapsed > div.flex.flex-1 > aside {
+    transform: translateY(105%) !important;
+  }
+  /* When Mobile Bottom Sheet Drawer is open, frame the map in the top 54dvh and lift controls above the sheet */
+  body:not(.sidebar-collapsed) #map-wrapper {
+    padding-bottom: 46dvh !important;
+  }
+  body:not(.sidebar-collapsed) .map-zoom-controls {
+    bottom: calc(46dvh + 10px) !important;
+  }
+  body:not(.sidebar-collapsed) #mobile-fab-stack {
+    bottom: calc(46dvh + 10px) !important;
+  }
+  body:not(.sidebar-collapsed) #mobile-fab-stack .mobile-fab-mini {
+    display: none !important;
   }
   /* Also make Studio Edit Peta overlay cleanly on mobile when Admin opens it */
   #map-editor-panel {
